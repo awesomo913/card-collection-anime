@@ -1,170 +1,127 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
+import { PRODUCT_TYPES_BY_GAME } from '../data/options';
+
+const EMPTY = {
+  name: '',
+  set_name: '',
+  product_type: 'Booster Box',
+  quantity: 1,
+  purchase_price: '',
+  game: 'magic',
+  notes: '',
+};
 
 const AddSealedPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
-  const [sealed, setSealed] = useState({
-    name: '',
-    set_name: '',
-    product_type: 'booster box',
-    quantity: 1,
-    purchase_price: '',
-    game: 'magic',
-    notes: ''
-  });
+  const [sealed, setSealed] = useState(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      const fetchSealedProduct = async () => {
-        try {
-          setLoading(true);
-          const response = await api.getSealedProduct(id);
-          setSealed(response.data);
-        } catch (err) {
-          setError('Failed to fetch sealed product');
-          console.error(err);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      fetchSealedProduct();
-    }
+    if (!id) return;
+    setLoading(true);
+    api.getSealedProduct(id)
+      .then((res) => setSealed({ ...EMPTY, ...res.data }))
+      .catch((err) => { console.error(err); setError('Failed to load sealed product'); })
+      .finally(() => setLoading(false));
   }, [id]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setSealed(prev => ({
+    setSealed((prev) => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: type === 'checkbox' ? checked : value,
     }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSaved(false);
     try {
-      setLoading(true);
-      setError(null);
-      setSuccess(false);
-      
-      // Convert empty strings to null for numeric fields
-      const sealedData = {
+      const payload = {
         ...sealed,
-        purchase_price: sealed.purchase_price === '' ? null : parseFloat(sealed.purchase_price),
-        quantity: parseInt(sealed.quantity) || 1
+        quantity: parseInt(sealed.quantity, 10) || 1,
+        purchase_price: sealed.purchase_price === '' || sealed.purchase_price == null
+          ? null
+          : parseFloat(sealed.purchase_price),
       };
-
-      if (id) {
-        await api.updateSealedProduct(id, sealedData);
-      } else {
-        await api.createSealedProduct(sealedData);
-      }
-      
-      setSuccess(true);
-      setTimeout(() => {
-        navigate('/sealed');
-      }, 1500);
+      if (id) await api.updateSealedProduct(id, payload);
+      else await api.createSealedProduct(payload);
+      setSaved(true);
+      setTimeout(() => navigate('/sealed'), 800);
     } catch (err) {
-      setError('Failed to save sealed product');
       console.error(err);
+      setError(err?.response?.data?.detail || 'Failed to save sealed product');
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <div>Saving...</div>;
-  if (error) return <div>Error: {error}</div>;
-  if (success) return <div>Sealed product saved successfully!</div>;
+  if (loading && !saved) return <div className="loading">Working…</div>;
+  if (saved) return <div className="loading">Saved! Redirecting…</div>;
 
   return (
-    <div>
-      <h2>{id ? 'Edit Sealed Product' : 'Add New Sealed Product'}</h2>
+    <section>
+      <h2>{id ? 'Edit Sealed Product' : 'Add Sealed Product'}</h2>
+      {error && <div className="error">{error}</div>}
+
       <form onSubmit={handleSubmit}>
         <div>
-          <label>Name:</label>
-          <input 
-            type="text" 
-            name="name" 
-            value={sealed.name} 
-            onChange={handleChange} 
-            required
-          />
-        </div>
-        <div>
-          <label>Set:</label>
-          <input 
-            type="text" 
-            name="set_name" 
-            value={sealed.set_name} 
-            onChange={handleChange} 
-            required
-          />
-        </div>
-        <div>
-          <label>Product Type:</label>
-          <select 
-            name="product_type" 
-            value={sealed.product_type} 
-            onChange={handleChange}
-          >
-            <option value="booster box">Booster Box</option>
-            <option value="pack">Pack</option>
-            <option value="deck">Deck</option>
-            <option value="box">Box</option>
-            <option value="case">Case</option>
-          </select>
-        </div>
-        <div>
-          <label>Quantity:</label>
-          <input 
-            type="number" 
-            name="quantity" 
-            value={sealed.quantity} 
-            onChange={handleChange} 
-            min="1"
-          />
-        </div>
-        <div>
-          <label>Purchase Price (optional):</label>
-          <input 
-            type="number" 
-            name="purchase_price" 
-            value={sealed.purchase_price || ''} 
-            onChange={handleChange} 
-            step="0.01"
-          />
-        </div>
-        <div>
-          <label>Game:</label>
-          <select 
-            name="game" 
-            value={sealed.game} 
-            onChange={handleChange}
-          >
+          <label>Game</label>
+          <select name="game" value={sealed.game} onChange={handleChange}>
             <option value="magic">Magic: The Gathering</option>
             <option value="pokemon">Pokémon</option>
             <option value="yugioh">Yu-Gi-Oh!</option>
           </select>
         </div>
         <div>
-          <label>Notes (optional):</label>
-          <textarea 
-            name="notes" 
-            value={sealed.notes} 
-            onChange={handleChange}
-          />
+          <label>Name</label>
+          <input type="text" name="name" value={sealed.name} onChange={handleChange} required />
         </div>
-        <button type="submit" disabled={loading}>
-          {loading ? 'Saving...' : 'Save Sealed Product'}
-        </button>
+        <div>
+          <label>Set</label>
+          <input type="text" name="set_name" value={sealed.set_name} onChange={handleChange} required />
+        </div>
+        <div>
+          <label>Product Type (pick or type)</label>
+          <input
+            type="text"
+            name="product_type"
+            value={sealed.product_type}
+            onChange={handleChange}
+            list="sealed-product-type-options"
+            autoComplete="off"
+            required
+          />
+          <datalist id="sealed-product-type-options">
+            {(PRODUCT_TYPES_BY_GAME[sealed.game] || []).map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+        </div>
+        <div>
+          <label>Quantity</label>
+          <input type="number" name="quantity" value={sealed.quantity} onChange={handleChange} min="1" />
+        </div>
+        <div>
+          <label>Purchase Price</label>
+          <input type="number" name="purchase_price" value={sealed.purchase_price ?? ''} onChange={handleChange} step="0.01" />
+        </div>
+        <div>
+          <label>Notes</label>
+          <textarea name="notes" value={sealed.notes || ''} onChange={handleChange} />
+        </div>
+
+        <button type="submit" disabled={loading}>{loading ? 'Saving…' : 'Save Sealed Product'}</button>
         <button type="button" onClick={() => navigate('/sealed')}>Cancel</button>
       </form>
-    </div>
+    </section>
   );
 };
 

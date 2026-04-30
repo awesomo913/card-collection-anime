@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import CatalogSearch from '../components/CatalogSearch';
+import { CONDITIONS, RARITIES_BY_GAME } from '../data/options';
 
 const EMPTY_CARD = {
   name: '',
@@ -139,11 +140,33 @@ const AddCardPage = () => {
         </div>
         <div>
           <label>Rarity</label>
-          <input type="text" name="rarity" value={card.rarity || ''} onChange={handleChange} />
+          <input
+            type="text"
+            name="rarity"
+            value={card.rarity || ''}
+            onChange={handleChange}
+            list="rarity-options"
+            autoComplete="off"
+          />
+          <datalist id="rarity-options">
+            {(RARITIES_BY_GAME[card.game] || []).map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
         </div>
         <div>
           <label>Condition</label>
-          <input type="text" name="condition" value={card.condition || ''} onChange={handleChange} />
+          <input
+            type="text"
+            name="condition"
+            value={card.condition || ''}
+            onChange={handleChange}
+            list="condition-options"
+            autoComplete="off"
+          />
+          <datalist id="condition-options">
+            {CONDITIONS.map((c) => <option key={c} value={c} />)}
+          </datalist>
         </div>
         <div>
           <label>Quantity</label>

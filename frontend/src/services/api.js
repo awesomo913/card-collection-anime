@@ -31,10 +31,16 @@ export const getPriceHistory = (itemType, itemId) =>
 export const searchCatalog = (q, game, limit = 12) =>
   api.get('/catalog/search', { params: { q, game, limit } });
 
+// Resolve a catalog URL (Scryfall / TCGplayer / PokemonTCG.io / YGOPRODeck)
+// to a single CatalogResult.
+export const resolveCatalogUrl = (url) =>
+  api.get('/catalog/resolve', { params: { url } });
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
-  getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory, searchCatalog,
+  getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory,
+  searchCatalog, resolveCatalogUrl,
 };
 
 export default apiClient;

@@ -140,6 +140,18 @@ def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@app.get("/catalog/resolve", response_model=schemas.CatalogResult)
+def catalog_resolve(url: str):
+    """Resolve a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL to a single
+    catalog entry the frontend can pin to a new card just like a search pick."""
+    if not url or not url.strip():
+        raise HTTPException(status_code=400, detail="url is required")
+    result = catalog_module.resolve_url(url.strip())
+    if not result:
+        raise HTTPException(status_code=404, detail="Could not resolve that URL")
+    return result
+
+
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])
 def catalog_search(q: str, game: str, limit: int = 12):
     """Live search the public catalog for the chosen game.

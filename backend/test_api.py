@@ -251,6 +251,71 @@ def test_catalog_search_scryfall_mocked(client, monkeypatch):
     assert row["image_url"] == "https://example.test/bolt.jpg"
 
 
+def test_catalog_resolve_validates_input(client):
+    """Empty/missing url -> 400; junk url -> 404."""
+    res = client.get("/catalog/resolve", params={"url": ""})
+    assert res.status_code == 400
+    res = client.get("/catalog/resolve", params={"url": "https://example.com/nope"})
+    assert res.status_code == 404
+
+
+def test_catalog_resolve_scryfall_url(client, monkeypatch):
+    """A scryfall.com URL should resolve to a single CatalogResult."""
+    fake_card = {
+        "id": "scry-uuid",
+        "name": "Lightning Bolt",
+        "set_name": "Limited Edition Alpha",
+        "image_uris": {"small": "https://example.test/bolt.jpg"},
+        "prices": {"usd": "300.00", "usd_foil": None},
+        "rarity": "common",
+    }
+
+    class FakeResp:
+        status_code = 200
+        def json(self): return fake_card
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://scryfall.com/card/lea/161/lightning-bolt"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["external_source"] == "scryfall"
+    assert body["external_id"] == "scry-uuid"
+    assert body["tcgplayer_price"] == 300.0
+
+
+def test_catalog_resolve_tcgplayer_url_via_scryfall(client, monkeypatch):
+    """A tcgplayer.com URL goes through Scryfall's /cards/tcgplayer/<id>."""
+    fake_card = {
+        "id": "tcg-uuid",
+        "name": "Black Lotus",
+        "set_name": "Alpha",
+        "image_uris": {"small": "https://example.test/lotus.jpg"},
+        "prices": {"usd": "50000.00", "usd_foil": None},
+        "rarity": "rare",
+    }
+
+    class FakeResp:
+        status_code = 200
+        def json(self): return fake_card
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://www.tcgplayer.com/product/12345/something"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["external_id"] == "tcg-uuid"
+    assert body["tcgplayer_price"] == 50000.0
+
+
 def test_create_card_with_external_id_uses_catalog_price(client, monkeypatch):
     """When a card is linked to a catalog ID, current_price should reflect the
     catalog-derived TCGplayer price even with no provider creds."""

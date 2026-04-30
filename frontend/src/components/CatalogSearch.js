@@ -14,25 +14,46 @@ import api from '../services/api';
 const CatalogSearch = ({ game, onPick }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
-  const [status, setStatus] = useState('idle'); // idle | searching | empty | error
+  const [status, setStatus] = useState('idle');
   const debounceRef = useRef(null);
+  // onPick comes from a parent that re-creates it every render. Pin it through a
+  // ref so the search effect's dependency list doesn't fire on every keystroke.
+  const onPickRef = useRef(onPick);
+  useEffect(() => { onPickRef.current = onPick; }, [onPick]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query || query.trim().length < 2) {
+    const trimmed = (query || '').trim();
+    if (!trimmed || trimmed.length < 2) {
       setResults([]);
       setStatus('idle');
       return;
     }
-    setStatus('searching');
+
+    const looksLikeUrl = /^https?:\/\//i.test(trimmed);
+    setStatus(looksLikeUrl ? 'resolving' : 'searching');
+
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await api.searchCatalog(query.trim(), game);
-        setResults(res.data || []);
-        setStatus((res.data || []).length === 0 ? 'empty' : 'idle');
+        if (looksLikeUrl) {
+          // URL drop: skip search, hit /catalog/resolve and auto-pick the single result.
+          const res = await api.resolveCatalogUrl(trimmed);
+          if (res.data) {
+            setResults([res.data]);
+            setStatus('resolved');
+            onPickRef.current(res.data);
+          } else {
+            setResults([]);
+            setStatus('empty');
+          }
+        } else {
+          const res = await api.searchCatalog(trimmed, game);
+          setResults(res.data || []);
+          setStatus((res.data || []).length === 0 ? 'empty' : 'idle');
+        }
       } catch (err) {
         console.error(err);
-        setStatus('error');
+        setStatus(looksLikeUrl ? 'url-error' : 'error');
       }
     }, 350);
     return () => clearTimeout(debounceRef.current);
@@ -41,18 +62,21 @@ const CatalogSearch = ({ game, onPick }) => {
   return (
     <div className="catalog-search">
       <label className="catalog-search-label">
-        Search TCG by name
+        Search TCG by name — or paste a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL
         <input
           type="text"
-          placeholder={`Search ${game}…`}
+          placeholder={`Search ${game} or paste a URL…`}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>
 
       {status === 'searching' && <div className="catalog-status">Searching…</div>}
+      {status === 'resolving' && <div className="catalog-status">Resolving URL…</div>}
+      {status === 'resolved' && <div className="catalog-status">Resolved — autofilled below.</div>}
       {status === 'empty' && <div className="catalog-status">No matches.</div>}
       {status === 'error' && <div className="catalog-status error">Search failed.</div>}
+      {status === 'url-error' && <div className="catalog-status error">Couldn't resolve that URL.</div>}
 
       {results.length > 0 && (
         <ul className="catalog-results" role="listbox">
