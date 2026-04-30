@@ -21,6 +21,11 @@ class Card(Base):
     game = Column(String)  # magic, pokemon, yugioh
     notes = Column(String, nullable=True)
     price_sources = Column(JSON, nullable=True)
+    # Catalog linkage: when present, refresh uses the source catalog API for an
+    # authoritative TCGplayer price instead of fuzzy name matching.
+    external_source = Column(String, nullable=True)  # 'scryfall'|'pokemontcg'|'ygoprodeck'
+    external_id = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
 
 class SealedProduct(Base):
     __tablename__ = "sealed_products"
@@ -37,6 +42,9 @@ class SealedProduct(Base):
     game = Column(String)  # magic, pokemon, yugioh
     notes = Column(String, nullable=True)
     price_sources = Column(JSON, nullable=True)
+    external_source = Column(String, nullable=True)
+    external_id = Column(String, nullable=True)
+    image_url = Column(String, nullable=True)
 
 class PriceHistory(Base):
     __tablename__ = "price_history"

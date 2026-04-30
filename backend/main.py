@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 import crud, models, schemas
 from database import SessionLocal, engine
 from price_service import update_all_prices
+from providers import catalog as catalog_module
 from scheduler import start_scheduler
 import uvicorn
 
@@ -133,11 +134,25 @@ def price_snapshot(db: Session = Depends(get_db)):
 def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     """Return historical prices for a given item from all sources."""
     hist = crud.get_price_history_for_item(db=db, item_type=item_type, item_id=item_id)
-    # Serialize to JSON-friendly structure
     return [
         {"source": h.source, "price": h.price, "timestamp": h.timestamp}
         for h in hist
     ]
+
+
+@app.get("/catalog/search", response_model=list[schemas.CatalogResult])
+def catalog_search(q: str, game: str, limit: int = 12):
+    """Live search the public catalog for the chosen game.
+
+    Returns normalized rows (image, set, TCGplayer price) the frontend can pin to
+    a new card so future refreshes hit the exact catalog ID instead of guessing
+    by name.
+    """
+    if not q or len(q.strip()) < 2:
+        return []
+    if game.lower() not in {"magic", "pokemon", "yugioh"}:
+        raise HTTPException(status_code=400, detail="game must be magic, pokemon, or yugioh")
+    return catalog_module.search(q.strip(), game.lower(), limit=min(max(1, limit), 24))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

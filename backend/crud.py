@@ -1,7 +1,12 @@
 from sqlalchemy.orm import Session
 import models, schemas
 from typing import Optional
-from price_service import fetch_card_price, fetch_sealed_price
+from price_service import (
+    fetch_card_price,
+    fetch_card_prices_all_sources,
+    fetch_sealed_price,
+    fetch_sealed_prices_all_sources,
+)
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
@@ -13,9 +18,15 @@ def get_cards(db: Session, skip: int = 0, limit: int = 100):
 
 def create_card(db: Session, card: schemas.CardCreate):
     db_card = models.Card(**card.model_dump())
-    # Fetch initial price
-    price = fetch_card_price(db_card.name, db_card.set_name, db_card.game, db_card.is_foil)
-    db_card.current_price = price
+    sources = fetch_card_prices_all_sources(
+        db_card.name, db_card.set_name, db_card.game, db_card.is_foil,
+        external_source=db_card.external_source,
+        external_id=db_card.external_id,
+    )
+    db_card.price_sources = sources or None
+    db_card.current_price = (
+        round(sum(sources.values()) / len(sources), 2) if sources else None
+    )
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
@@ -26,9 +37,14 @@ def update_card(db: Session, card_id: int, card: schemas.CardUpdate):
     if db_card:
         for key, value in card.model_dump(exclude_unset=True).items():
             setattr(db_card, key, value)
-        # Update price if any relevant field changed
-        if any(key in ['name', 'set_name', 'game', 'is_foil'] for key in card.model_dump(exclude_unset=True)):
-            price = fetch_card_price(db_card.name, db_card.set_name, db_card.game, db_card.is_foil)
+        # Re-fetch price when any pricing-relevant field changed.
+        relevant = {"name", "set_name", "game", "is_foil"}
+        if relevant & set(card.model_dump(exclude_unset=True).keys()):
+            price = fetch_card_price(
+                db_card.name, db_card.set_name, db_card.game, db_card.is_foil,
+                external_source=db_card.external_source,
+                external_id=db_card.external_id,
+            )
             db_card.current_price = price
         db.commit()
         db.refresh(db_card)
@@ -49,9 +65,13 @@ def get_sealed_products(db: Session, skip: int = 0, limit: int = 100):
 
 def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
     db_sealed = models.SealedProduct(**sealed.model_dump())
-    # Fetch initial price
-    price = fetch_sealed_price(db_sealed.name, db_sealed.set_name, db_sealed.product_type, db_sealed.game)
-    db_sealed.current_price = price
+    sources = fetch_sealed_prices_all_sources(
+        db_sealed.name, db_sealed.set_name, db_sealed.product_type, db_sealed.game,
+    )
+    db_sealed.price_sources = sources or None
+    db_sealed.current_price = (
+        round(sum(sources.values()) / len(sources), 2) if sources else None
+    )
     db.add(db_sealed)
     db.commit()
     db.refresh(db_sealed)

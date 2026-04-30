@@ -27,10 +27,14 @@ export const triggerPriceUpdate = () => api.post('/prices/update');
 export const getPriceHistory = (itemType, itemId) =>
   api.get(`/price-history/${itemType}/${itemId}`);
 
+// Live catalog search (game: 'magic' | 'pokemon' | 'yugioh')
+export const searchCatalog = (q, game, limit = 12) =>
+  api.get('/catalog/search', { params: { q, game, limit } });
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
-  getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory,
+  getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory, searchCatalog,
 };
 
 export default apiClient;

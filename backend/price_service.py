@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from database import SessionLocal
-from providers import PriceQuery, get_enabled_providers
+from providers import PriceQuery, catalog, get_enabled_providers
 import models
 
 logger = logging.getLogger(__name__)
@@ -58,10 +58,42 @@ def _aggregate(query: PriceQuery, mock_fn) -> Dict[str, float]:
 
 
 def fetch_card_prices_all_sources(
-    name: str, set_name: str, game: str, is_foil: bool = False
+    name: str,
+    set_name: str,
+    game: str,
+    is_foil: bool = False,
+    external_source: Optional[str] = None,
+    external_id: Optional[str] = None,
 ) -> Dict[str, float]:
+    """Aggregate prices for a card.
+
+    When the card was linked to a public catalog (Scryfall / PokemonTCG.io / YGOPRODeck)
+    we trust that source for the TCGPlayer price — it is keyed by an exact catalog ID
+    instead of fuzzy name matching. Other configured providers still run on top.
+    """
+    out: Dict[str, float] = {}
+    if external_source and external_id:
+        catalog_price = catalog.fetch_tcgplayer_price(external_source, external_id, is_foil)
+        if catalog_price is not None:
+            out["TCGPlayer"] = round(float(catalog_price), 2)
+
     query = PriceQuery(name=name, set_name=set_name, game=game, is_foil=is_foil)
-    return _aggregate(query, lambda: _mock_card_prices(name, set_name, game, is_foil))
+    providers = get_enabled_providers()
+    for provider in providers:
+        # Don't overwrite the catalog-derived TCGPlayer price.
+        if provider.name in out:
+            continue
+        try:
+            result = provider.fetch(query)
+        except Exception as exc:
+            logger.exception("Provider %s raised: %s", provider.name, exc)
+            continue
+        if result and result.price is not None:
+            out[result.source] = round(float(result.price), 2)
+
+    if out:
+        return out
+    return _mock_card_prices(name, set_name, game, is_foil)
 
 
 def fetch_sealed_prices_all_sources(
@@ -80,9 +112,17 @@ def fetch_sealed_prices_all_sources(
 
 
 def fetch_card_price(
-    name: str, set_name: str, game: str, is_foil: bool = False
+    name: str,
+    set_name: str,
+    game: str,
+    is_foil: bool = False,
+    external_source: Optional[str] = None,
+    external_id: Optional[str] = None,
 ) -> Optional[float]:
-    prices = fetch_card_prices_all_sources(name, set_name, game, is_foil)
+    prices = fetch_card_prices_all_sources(
+        name, set_name, game, is_foil,
+        external_source=external_source, external_id=external_id,
+    )
     return round(sum(prices.values()) / len(prices), 2) if prices else None
 
 
@@ -103,7 +143,9 @@ def update_all_prices() -> None:
 
         for card in db.query(models.Card).all():
             prices = fetch_card_prices_all_sources(
-                card.name, card.set_name, card.game, card.is_foil
+                card.name, card.set_name, card.game, card.is_foil,
+                external_source=card.external_source,
+                external_id=card.external_id,
             )
             for source, price in prices.items():
                 try:

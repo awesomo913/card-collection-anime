@@ -52,6 +52,12 @@ const TileCard = ({ item, onDelete }) => {
         </div>
       </header>
 
+      {item.image_url && (
+        <div className="tile-image">
+          <img src={item.image_url} alt={item.name} loading="lazy" />
+        </div>
+      )}
+
       <div className="tile-price">
         <span className="label">Current</span>
         <span className="value">{price != null ? `$${price.toFixed(2)}` : 'N/A'}</span>

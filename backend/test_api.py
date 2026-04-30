@@ -203,3 +203,76 @@ def test_tcgplayer_provider_off_when_no_keys(monkeypatch):
     monkeypatch.delenv("TCGPLAYER_CLIENT_SECRET", raising=False)
     from providers.tcgplayer import TCGPlayerProvider
     assert TCGPlayerProvider().is_enabled() is False
+
+
+# ---- Catalog search --------------------------------------------------------
+
+def test_catalog_search_validates_game(client):
+    res = client.get("/catalog/search", params={"q": "Pikachu", "game": "warhammer"})
+    assert res.status_code == 400
+
+
+def test_catalog_search_short_query_returns_empty(client):
+    res = client.get("/catalog/search", params={"q": "a", "game": "magic"})
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_catalog_search_scryfall_mocked(client, monkeypatch):
+    """Mock the upstream HTTP to assert we normalize Scryfall payloads correctly."""
+    fake_payload = {
+        "data": [{
+            "id": "abc-123",
+            "name": "Lightning Bolt",
+            "set_name": "Limited Edition Alpha",
+            "image_uris": {"small": "https://example.test/bolt.jpg"},
+            "prices": {"usd": "12.34", "usd_foil": "56.78"},
+            "rarity": "common",
+        }]
+    }
+
+    class FakeResp:
+        status_code = 200
+        def json(self): return fake_payload
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    res = client.get("/catalog/search", params={"q": "Lightning Bolt", "game": "magic"})
+    assert res.status_code == 200
+    rows = res.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["external_source"] == "scryfall"
+    assert row["external_id"] == "abc-123"
+    assert row["name"] == "Lightning Bolt"
+    assert row["tcgplayer_price"] == 12.34
+    assert row["tcgplayer_price_foil"] == 56.78
+    assert row["image_url"] == "https://example.test/bolt.jpg"
+
+
+def test_create_card_with_external_id_uses_catalog_price(client, monkeypatch):
+    """When a card is linked to a catalog ID, current_price should reflect the
+    catalog-derived TCGplayer price even with no provider creds."""
+    from providers import catalog as catalog_module
+
+    # Force the catalog refresh path to return a known price.
+    monkeypatch.setattr(
+        catalog_module, "fetch_tcgplayer_price",
+        lambda source, ext_id, is_foil=False: 99.99,
+    )
+
+    res = client.post("/cards/", json={
+        "name": "Pinned Card",
+        "set_name": "Test",
+        "game": "magic",
+        "external_source": "scryfall",
+        "external_id": "pinned-id",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["external_source"] == "scryfall"
+    assert body["external_id"] == "pinned-id"
+    # Average across {TCGPlayer: 99.99, mock_eBay, mock_CardMarket} or just 99.99
+    # depending on whether mocks fire. Catalog price is preserved as TCGPlayer.
+    assert body["price_sources"]["TCGPlayer"] == 99.99

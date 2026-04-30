@@ -15,6 +15,9 @@ class CardBase(BaseModel):
     game: str  # magic, pokemon, yugioh
     price_sources: Optional[Dict[str, float]] = None
     notes: Optional[str] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
+    image_url: Optional[str] = None
 
 class CardCreate(CardBase):
     pass
@@ -32,12 +35,18 @@ class CardUpdate(BaseModel):
     is_signed: Optional[bool] = None
     game: Optional[str] = None
     notes: Optional[str] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
+    image_url: Optional[str] = None
 
 class Card(CardBase):
     id: int
     current_price: Optional[float] = None
     price_sources: Optional[Dict[str, float]] = None
     last_updated: datetime
+    image_url: Optional[str] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 class SealedProductBase(BaseModel):
@@ -49,6 +58,9 @@ class SealedProductBase(BaseModel):
     game: str  # magic, pokemon, yugioh
     notes: Optional[str] = None
     price_sources: Optional[Dict[str, float]] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
+    image_url: Optional[str] = None
 
 class SealedProductCreate(SealedProductBase):
     pass
@@ -68,4 +80,19 @@ class SealedProduct(SealedProductBase):
     current_price: Optional[float] = None
     price_sources: Optional[Dict[str, float]] = None
     last_updated: datetime
+    image_url: Optional[str] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class CatalogResult(BaseModel):
+    """One row of catalog search output, normalized across game-specific APIs."""
+    external_source: str
+    external_id: str
+    name: str
+    set_name: str
+    image_url: Optional[str] = None
+    tcgplayer_price: Optional[float] = None
+    tcgplayer_price_foil: Optional[float] = None
+    rarity: Optional[str] = None

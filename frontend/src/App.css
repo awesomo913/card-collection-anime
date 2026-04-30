@@ -520,3 +520,165 @@ form button { margin-right: 10px; }
   .snapshot-bars .source-bar { grid-template-columns: 100px 1fr 90px; gap: 8px; }
   .snapshot-total .value { font-size: 1.9rem; }
 }
+
+/* ---------- Catalog search (TCG live picker) ---------- */
+
+.catalog-search-host {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 24px;
+  backdrop-filter: blur(8px);
+}
+.catalog-game-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.catalog-game-row label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.catalog-game-row select {
+  width: auto;
+  min-width: 220px;
+}
+.linked-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 224, 255, 0.55);
+  color: var(--neon-cyan);
+  background: rgba(22, 224, 255, 0.10);
+}
+.catalog-search { margin-top: 4px; }
+.catalog-search-label {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.catalog-search-label input {
+  margin-top: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.catalog-search-label input:focus { outline: none; border-color: var(--neon-cyan); box-shadow: var(--glow-cyan); }
+.catalog-status { margin-top: 8px; color: var(--text-mute); font-size: 0.85rem; }
+.catalog-status.error { color: var(--neon-red); }
+.catalog-results {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.catalog-results li {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 10px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.catalog-results li:hover, .catalog-results li:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  transform: translateY(-1px);
+  box-shadow: var(--glow-cyan);
+}
+.catalog-thumb {
+  width: 56px;
+  height: 78px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+}
+.catalog-meta { min-width: 0; }
+.catalog-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catalog-set {
+  font-size: 0.75rem;
+  color: var(--text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catalog-price {
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--neon-cyan);
+}
+.catalog-price-foil { color: var(--neon-pink); }
+.catalog-hint {
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: var(--text-mute);
+}
+
+/* Form image preview */
+.form-image-preview {
+  margin: 10px 0 18px 0;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+}
+.form-image-preview img {
+  max-width: 220px;
+  max-height: 300px;
+  border-radius: 8px;
+  box-shadow: var(--shadow-deep);
+}
+
+.checkbox-row { display: flex; gap: 24px; }
+.checkbox-row label { display: flex; align-items: center; gap: 8px; }
+.checkbox-row input { width: auto; }
+
+/* ---------- Tile thumbnail ---------- */
+
+.tile-image {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0 12px 0;
+}
+.tile-image img {
+  width: 100%;
+  max-width: 200px;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+}
