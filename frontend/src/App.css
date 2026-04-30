@@ -1,0 +1,522 @@
+/* =========================================================================
+   Card Collection — Anime Theme
+   Palette: deep indigo/black base, hot-pink + cyan + violet neon accents.
+   Game accents: Magic=violet, Pokemon=gold, Yu-Gi-Oh=crimson.
+   ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg-0:       #07050d;
+  --bg-1:       #0e0a1a;
+  --bg-2:       #1a0f2a;
+  --bg-3:       #251638;
+  --neon-pink:  #ff3da9;
+  --neon-cyan:  #16e0ff;
+  --neon-violet:#a855f7;
+  --neon-gold:  #ffd166;
+  --neon-red:   #ff4d6d;
+  --text:       #f1eef9;
+  --text-dim:   rgba(241, 238, 249, 0.72);
+  --text-mute:  rgba(241, 238, 249, 0.45);
+  --glass:      rgba(255, 255, 255, 0.06);
+  --glass-strong: rgba(255, 255, 255, 0.12);
+  --border:     rgba(255, 255, 255, 0.18);
+  --shadow-deep: 0 18px 40px rgba(0, 0, 0, 0.55);
+  --glow-pink:  0 0 18px rgba(255, 61, 169, 0.55), 0 0 38px rgba(255, 61, 169, 0.25);
+  --glow-cyan:  0 0 18px rgba(22, 224, 255, 0.55), 0 0 38px rgba(22, 224, 255, 0.25);
+
+  --src-tcgplayer: linear-gradient(90deg, #4e6cff, #16e0ff);
+  --src-ebay:      linear-gradient(90deg, #ffd166, #ff8a00);
+  --src-cardmarket:linear-gradient(90deg, #ff3da9, #a855f7);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { margin: 0; padding: 0; height: 100%; }
+
+body {
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: 'Rajdhani', 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- App shell + animated cosmic backdrop ---------- */
+
+.anime-app {
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 61, 169, 0.30), transparent 42%),
+    radial-gradient(circle at 82%  8%, rgba(22, 224, 255, 0.30), transparent 42%),
+    radial-gradient(circle at 60% 90%, rgba(168,  85, 247, 0.25), transparent 50%),
+    linear-gradient(160deg, var(--bg-1) 0%, var(--bg-2) 55%, var(--bg-0) 100%);
+  color: var(--text);
+}
+
+/* Star/grid overlay */
+.anime-app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.55), transparent 50%),
+    radial-gradient(1px 1px at 80% 60%, rgba(255,255,255,0.45), transparent 50%),
+    radial-gradient(1px 1px at 35% 80%, rgba(255,255,255,0.40), transparent 50%),
+    radial-gradient(1px 1px at 65% 15%, rgba(255,255,255,0.50), transparent 50%);
+  background-size: 600px 600px;
+  opacity: 0.6;
+  animation: drift 90s linear infinite;
+}
+
+@keyframes drift { from { background-position: 0 0; } to { background-position: 600px 600px; } }
+
+.App { text-align: left; }
+
+/* ---------- Header / nav ---------- */
+
+.App-header {
+  background: linear-gradient(180deg, rgba(7, 5, 13, 0.95), rgba(7, 5, 13, 0.55));
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 32px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.App-header h1 {
+  margin: 0 0 8px 0;
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-weight: 900;
+  font-size: 1.7rem;
+  letter-spacing: 0.06em;
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-cyan), var(--neon-violet));
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 30px rgba(255, 61, 169, 0.25);
+}
+
+.App-header nav ul { list-style: none; padding: 0; margin: 0; display: flex; gap: 22px; flex-wrap: wrap; }
+.App-header nav ul li a {
+  position: relative;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.92rem;
+  padding-bottom: 4px;
+  transition: color 0.18s ease;
+}
+.App-header nav ul li a::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-cyan));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.22s ease;
+}
+.App-header nav ul li a:hover { color: var(--text); }
+.App-header nav ul li a:hover::after { transform: scaleX(1); }
+
+main { padding: 28px 32px 80px; max-width: 1400px; margin: 0 auto; }
+
+main h2 {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  margin: 8px 0 18px 0;
+}
+
+/* ---------- Dashboard ---------- */
+
+.dashboard-stats { display: flex; flex-wrap: wrap; gap: 18px; margin: 18px 0; }
+.stat-card {
+  flex: 1 1 220px;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-deep);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-deep), var(--glow-cyan); }
+.stat-card h3 {
+  margin: 0 0 6px 0;
+  font-family: 'Rajdhani', sans-serif;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  color: var(--text-mute);
+}
+.stat-card p, .stat-card .stat-value {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.7rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-violet));
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  margin: 0;
+}
+
+.quick-actions { margin: 26px 0; }
+.quick-actions h3 { margin: 0 0 10px 0; font-family: 'Orbitron', sans-serif; }
+.quick-actions button { margin-right: 8px; }
+
+/* ---------- Buttons + inputs ---------- */
+
+button, .add-button {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.88rem;
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-violet));
+  color: #fff;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 6px 18px rgba(255, 61, 169, 0.28);
+}
+button:hover, .add-button:hover { filter: brightness(1.12); transform: translateY(-1px); box-shadow: var(--glow-pink); }
+button[disabled] {
+  background: rgba(255,255,255,0.10);
+  color: var(--text-mute);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.search-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+}
+.search-bar input {
+  flex: 1;
+  max-width: 420px;
+  padding: 12px 14px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.search-bar input:focus { outline: none; border-color: var(--neon-cyan); box-shadow: var(--glow-cyan); }
+.search-bar input::placeholder { color: var(--text-mute); }
+
+/* ---------- Forms ---------- */
+
+form { max-width: 640px; }
+form div { margin: 14px 0; }
+form label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+form input, form select, form textarea {
+  width: 100%;
+  padding: 11px 13px;
+  background: var(--glass);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+form input:focus, form select:focus, form textarea:focus {
+  outline: none;
+  border-color: var(--neon-pink);
+  box-shadow: var(--glow-pink);
+}
+form select option { background: var(--bg-2); color: var(--text); }
+form button { margin-right: 10px; }
+
+/* ---------- Tile grid ---------- */
+
+.card-grid, .sealed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 18px;
+  padding: 4px 0;
+}
+
+.anime-tile {
+  position: relative;
+  border-radius: 16px;
+  padding: 18px;
+  color: var(--text);
+  background:
+    linear-gradient(140deg, rgba(255, 61, 169, 0.18), rgba(22, 224, 255, 0.14) 60%, rgba(168, 85, 247, 0.16)),
+    rgba(14, 10, 26, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-deep);
+  overflow: hidden;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+.anime-tile::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  background: conic-gradient(from 0deg, var(--neon-pink), var(--neon-cyan), var(--neon-violet), var(--neon-pink));
+  filter: blur(22px);
+  opacity: 0;
+  z-index: -1;
+  transition: opacity 0.22s ease;
+}
+.anime-tile:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow: var(--shadow-deep), 0 0 30px rgba(168, 85, 247, 0.40);
+}
+.anime-tile:hover::before { opacity: 0.55; }
+
+/* Game-color accent strip */
+.anime-tile[data-game="magic"]   { box-shadow: var(--shadow-deep), inset 4px 0 0 var(--neon-violet); }
+.anime-tile[data-game="pokemon"] { box-shadow: var(--shadow-deep), inset 4px 0 0 var(--neon-gold); }
+.anime-tile[data-game="yugioh"]  { box-shadow: var(--shadow-deep), inset 4px 0 0 var(--neon-red); }
+
+.tile-header { margin-bottom: 10px; }
+.tile-title {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+.tile-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 2px;
+}
+
+.tile-price {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.tile-price .label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  color: var(--text-mute);
+}
+.tile-price .value {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 1.45rem;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 18px rgba(22, 224, 255, 0.30);
+}
+
+/* Per-source bars inside a tile */
+.price-sources { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.price-sources .source-bar { display: flex; align-items: center; gap: 8px; height: 22px; }
+.price-sources .source-bar .src-name {
+  width: 88px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.price-sources .source-bar .bar {
+  height: 8px;
+  border-radius: 6px;
+  background: var(--src-tcgplayer);
+  flex: 1;
+  box-shadow: inset 0 0 6px rgba(0,0,0,0.45);
+  transition: width 0.6s ease;
+}
+.price-sources .source-bar[data-source="TCGPlayer"]  .bar { background: var(--src-tcgplayer); }
+.price-sources .source-bar[data-source="eBay"]       .bar { background: var(--src-ebay); }
+.price-sources .source-bar[data-source="CardMarket"] .bar { background: var(--src-cardmarket); }
+.price-sources .source-bar .src-price {
+  width: 70px;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+/* Sparkline */
+.sparkline-wrap {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.sparkline-wrap .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-mute);
+  margin-bottom: 4px;
+}
+.sparkline svg { display: block; width: 100%; height: 36px; }
+.sparkline path { fill: none; stroke-width: 1.6; }
+
+.tile-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tile-actions a {
+  color: var(--neon-cyan);
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+  border: 1px solid rgba(22, 224, 255, 0.45);
+  border-radius: 6px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.tile-actions a:hover { background: rgba(22, 224, 255, 0.12); box-shadow: var(--glow-cyan); }
+.tile-actions .ghost {
+  background: transparent;
+  color: var(--neon-pink);
+  border: 1px solid rgba(255, 61, 169, 0.45);
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.tile-actions .ghost:hover { background: rgba(255, 61, 169, 0.12); box-shadow: var(--glow-pink); }
+
+/* ---------- Snapshot page ---------- */
+
+.anime-snapshot {
+  padding: 24px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(168, 85, 247, 0.18), rgba(22, 224, 255, 0.14)),
+    rgba(14, 10, 26, 0.85);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-deep);
+}
+.anime-snapshot h2 {
+  font-family: 'Orbitron', sans-serif;
+  margin: 0 0 6px 0;
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-cyan));
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+}
+.anime-snapshot p {
+  margin: 0 0 18px 0;
+  color: var(--text-mute);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+.snapshot-bars { display: flex; flex-direction: column; gap: 14px; margin: 18px 0; }
+.snapshot-bars .source-bar {
+  display: grid;
+  grid-template-columns: 140px 1fr 110px;
+  align-items: center;
+  gap: 14px;
+}
+.snapshot-bars .source-bar .bar-label {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+.snapshot-bars .source-bar .bar {
+  height: 14px;
+  border-radius: 10px;
+  background: var(--src-tcgplayer);
+  box-shadow: inset 0 0 8px rgba(0,0,0,0.45);
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.snapshot-bars .source-bar[data-source="TCGPlayer"]  .bar { background: var(--src-tcgplayer);  box-shadow: inset 0 0 8px rgba(0,0,0,0.45), 0 0 14px rgba(22, 224, 255, 0.45); }
+.snapshot-bars .source-bar[data-source="eBay"]       .bar { background: var(--src-ebay);       box-shadow: inset 0 0 8px rgba(0,0,0,0.45), 0 0 14px rgba(255, 209, 102, 0.45); }
+.snapshot-bars .source-bar[data-source="CardMarket"] .bar { background: var(--src-cardmarket); box-shadow: inset 0 0 8px rgba(0,0,0,0.45), 0 0 14px rgba(255,  61, 169, 0.45); }
+.snapshot-bars .source-bar .bar-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  text-align: right;
+  font-size: 0.95rem;
+}
+
+.snapshot-total {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.snapshot-total .label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--text-mute);
+}
+.snapshot-total .value {
+  display: block;
+  margin-top: 6px;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 900;
+  font-size: 2.6rem;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink), var(--neon-violet));
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 24px rgba(22, 224, 255, 0.30);
+}
+
+/* ---------- States ---------- */
+
+.empty-state, .loading, .error {
+  margin: 32px auto;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: 'Rajdhani', sans-serif;
+}
+.error { color: var(--neon-red); }
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 600px) {
+  .App-header { padding: 14px 16px; }
+  .App-header h1 { font-size: 1.3rem; }
+  main { padding: 16px; }
+  .snapshot-bars .source-bar { grid-template-columns: 100px 1fr 90px; gap: 8px; }
+  .snapshot-total .value { font-size: 1.9rem; }
+}
