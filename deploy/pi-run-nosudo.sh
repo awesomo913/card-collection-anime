@@ -22,6 +22,44 @@ if [ ! -x backend/venv/bin/uvicorn ]; then
   backend/venv/bin/pip install -r backend/requirements.txt
 fi
 
+# --- Node.js (user-space via fnm if apt-installed npm is missing) ---
+# Pi OS Bookworm doesn't ship npm by default, and we have no sudo. fnm is a
+# single static binary that drops Node into ~/.local/share/fnm/, no root needed.
+FNM_DIR="$HOME/.local/share/fnm"
+export PATH="$FNM_DIR:$PATH"
+if ! command -v npm >/dev/null 2>&1; then
+  if [ ! -x "$FNM_DIR/fnm" ]; then
+    log "installing fnm (user-space Node manager)"
+    mkdir -p "$FNM_DIR"
+    # Resolve fnm's latest arm64 release tarball off GitHub
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+      aarch64|arm64) FNM_ASSET="fnm-arm64.zip" ;;
+      x86_64) FNM_ASSET="fnm-linux.zip" ;;
+      *) echo "unsupported arch: $ARCH"; exit 1 ;;
+    esac
+    TMP="$(mktemp -d)"
+    curl -fsSL -o "$TMP/fnm.zip" \
+      "https://github.com/Schniz/fnm/releases/latest/download/${FNM_ASSET}"
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q -o "$TMP/fnm.zip" -d "$FNM_DIR"
+    else
+      python3 -m zipfile -e "$TMP/fnm.zip" "$FNM_DIR"
+    fi
+    chmod +x "$FNM_DIR/fnm"
+    rm -rf "$TMP"
+  fi
+  log "installing Node 20 via fnm"
+  eval "$("$FNM_DIR/fnm" env --shell bash)"
+  "$FNM_DIR/fnm" install 20 >/dev/null
+  "$FNM_DIR/fnm" use 20 >/dev/null
+fi
+
+# Re-evaluate fnm env so node/npm are on PATH for the rest of the script
+if [ -x "$FNM_DIR/fnm" ]; then
+  eval "$("$FNM_DIR/fnm" env --shell bash 2>/dev/null || true)"
+fi
+
 # --- Frontend build (single-port mode: API base = same origin) ---
 log "frontend build"
 pushd frontend >/dev/null
