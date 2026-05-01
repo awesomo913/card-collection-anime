@@ -6,18 +6,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import crud, models, schemas
 from database import SessionLocal, engine
+from pathlib import Path
 from price_service import update_all_prices
 from providers import catalog as catalog_module
 import profile_backup
+import status as status_module
 from scheduler import start_scheduler
 import uvicorn
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 models.Base.metadata.create_all(bind=engine)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    status_module.install_ring_handler()
     # Skip the background price scheduler in test mode so pytest stays deterministic.
     if not os.environ.get("DISABLE_SCHEDULER"):
         start_scheduler()
@@ -142,6 +146,37 @@ def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@app.get("/health")
+def health():
+    """Lightweight liveness probe — used by load balancers and the status UI."""
+    return {"ok": True}
+
+
+@app.get("/status")
+def status_view(db: Session = Depends(get_db)):
+    """Operational snapshot: uptime, system metrics, scheduler health, DB counts."""
+    cards_count = db.query(models.Card).count()
+    sealed_count = db.query(models.SealedProduct).count()
+    history_count = db.query(models.PriceHistory).count()
+    total_value = crud.get_collection_value(db=db)
+    return {
+        **status_module.overview(),
+        "system": status_module.system_snapshot(),
+        "database": {
+            "cards": cards_count,
+            "sealed_products": sealed_count,
+            "price_history_rows": history_count,
+            "total_value": total_value,
+        },
+    }
+
+
+@app.get("/status/logs")
+def status_logs(limit: int = 100, level: str | None = None):
+    """Last N log records held in the in-memory ring buffer."""
+    return status_module.recent_logs(limit=min(max(1, limit), 500), level=level)
+
+
 @app.post("/profile/export", response_class=PlainTextResponse)
 def profile_export(req: schemas.BackupExportRequest, db: Session = Depends(get_db)):
     """Return an encrypted text blob containing the entire collection."""
@@ -192,6 +227,14 @@ def catalog_search(q: str, game: str, limit: int = 12, sealed: bool = False):
     return catalog_module.search(
         q.strip(), game.lower(), limit=min(max(1, limit), 24), sealed=sealed
     )
+
+# Single-port deploy mode: when ../frontend/build exists (e.g. on a Pi after
+# `npm run build`), serve the static UI from the same FastAPI process. Mounted
+# last so explicit API routes above always win.
+_FRONTEND_BUILD = Path(__file__).resolve().parent.parent / "frontend" / "build"
+if _FRONTEND_BUILD.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_BUILD), html=True), name="ui")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

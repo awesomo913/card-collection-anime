@@ -7,6 +7,7 @@ import AddSealedPage from './pages/AddSealedPage';
 import DashboardPage from './pages/DashboardPage';
 import PriceSnapshotPage from './pages/PriceSnapshotPage';
 import SettingsPage from './pages/SettingsPage';
+import StatusPage from './pages/StatusPage';
 import './App.css';
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
               <li><Link to="/sealed">Sealed Products</Link></li>
               <li><Link to="/snapshot">Price Snapshot</Link></li>
               <li><Link to="/settings">Backup</Link></li>
+              <li><Link to="/status">Status</Link></li>
             </ul>
           </nav>
         </header>
@@ -37,6 +39,7 @@ function App() {
             <Route path="/sealed/edit/:id" element={<AddSealedPage />} />
             <Route path="/snapshot" element={<PriceSnapshotPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/status" element={<StatusPage />} />
           </Routes>
         </main>
       </div>

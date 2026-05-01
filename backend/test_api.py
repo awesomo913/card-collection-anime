@@ -316,6 +316,38 @@ def test_catalog_resolve_tcgplayer_url_via_scryfall(client, monkeypatch):
     assert body["tcgplayer_price"] == 50000.0
 
 
+def test_health_endpoint(client):
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json() == {"ok": True}
+
+
+def test_status_endpoint_shape(client):
+    res = client.get("/status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["service"] == "card-collection-anime"
+    assert "uptime_seconds" in body
+    assert "hostname" in body
+    assert "system" in body and "database" in body
+    db = body["database"]
+    assert {"cards", "sealed_products", "price_history_rows", "total_value"} <= set(db)
+
+
+def test_status_logs_endpoint(client):
+    import logging
+    logging.getLogger("test_status").info("hello-from-test")
+    res = client.get("/status/logs", params={"limit": 50})
+    assert res.status_code == 200
+    rows = res.json()
+    assert isinstance(rows, list)
+    # Log handler is shared module state; the test just emitted a record so we
+    # expect to see it (or at least: the schema is right).
+    if rows:
+        sample = rows[-1]
+        assert {"ts", "level", "name", "msg"} <= set(sample)
+
+
 def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
     """YGO URL with a specific set in the slug must pick that printing's set_name,
     not the first one in YGOPRODeck's card_sets list."""

@@ -36,6 +36,11 @@ export const searchCatalog = (q, game, { limit = 12, sealed = false } = {}) =>
 export const resolveCatalogUrl = (url) =>
   api.get('/catalog/resolve', { params: { url } });
 
+// Server status (uptime, system metrics, DB counts, scheduler health).
+export const getStatus = () => api.get('/status');
+export const getStatusLogs = (limit = 100, level) =>
+  api.get('/status/logs', { params: { limit, ...(level ? { level } : {}) } });
+
 // Encrypted backup: server returns the cipher-text blob; client downloads it.
 export const exportProfile = (password) =>
   api.post('/profile/export', { password }, { responseType: 'text', transformResponse: (x) => x });
@@ -48,6 +53,7 @@ const apiClient = {
   getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory,
   searchCatalog, resolveCatalogUrl,
   exportProfile, importProfile,
+  getStatus, getStatusLogs,
 };
 
 export default apiClient;

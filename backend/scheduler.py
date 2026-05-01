@@ -8,17 +8,19 @@ logger = logging.getLogger(__name__)
 
 def run_scheduler(interval_hours=24):
     """Run the price update scheduler in a separate thread."""
+    from status import record_price_update
+
     def scheduler_thread():
         while True:
             try:
                 logger.info("Starting scheduled price update...")
                 update_all_prices()
                 logger.info("Scheduled price update completed.")
+                record_price_update(True)
             except Exception as e:
                 logger.error(f"Error in price update scheduler: {e}")
-            
-            # Sleep for the specified interval
-            time.sleep(interval_hours * 60 * 60)  # Convert hours to seconds
+                record_price_update(False, str(e))
+            time.sleep(interval_hours * 60 * 60)
     
     thread = threading.Thread(target=scheduler_thread, daemon=True)
     thread.start()
