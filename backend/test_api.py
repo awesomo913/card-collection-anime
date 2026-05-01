@@ -316,12 +316,20 @@ def test_catalog_resolve_tcgplayer_url_via_scryfall(client, monkeypatch):
     assert body["tcgplayer_price"] == 50000.0
 
 
-def test_yugioh_tcgplayer_url_resolves_via_slug(client, monkeypatch):
-    """YGO TCGplayer URL slug -> YGOPRODeck name search fallback."""
+def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
+    """YGO URL with a specific set in the slug must pick that printing's set_name,
+    not the first one in YGOPRODeck's card_sets list."""
     ygo_card = {
         "id": 37818794,
         "name": "Red-Eyes Dark Dragoon",
-        "card_sets": [{"set_name": "Rarity Collection 5"}],
+        "card_sets": [
+            {"set_name": "2020 Tin of Lost Memories Mega Pack",
+             "set_rarity": "Ultra Rare", "set_price": "115.97"},
+            {"set_name": "25th Anniversary Rarity Collection II",
+             "set_rarity": "Collector's Rare", "set_price": "0"},
+            {"set_name": "Rarity Collection 5",
+             "set_rarity": "Starlight Rare", "set_price": "0"},
+        ],
         "card_images": [{"image_url_small": "https://example.test/dragoon.jpg"}],
         "card_prices": [{"tcgplayer_price": "1.19"}],
         "type": "Fusion Monster",
@@ -335,10 +343,10 @@ def test_yugioh_tcgplayer_url_resolves_via_slug(client, monkeypatch):
             return self._payload
 
     seq = iter([
-        Resp(404, {"object": "error"}),                         # Scryfall miss
-        Resp(200, {"data": []}),                                # PokemonTCG no match
-        Resp(400, {"error": "no match"}),                       # YGOPRODeck full-name miss
-        Resp(200, {"data": [ygo_card]}),                        # YGOPRODeck trailing-tokens hit
+        Resp(404, {"object": "error"}),     # Scryfall miss
+        Resp(200, {"data": []}),            # PokemonTCG no match
+        Resp(400, {"error": "no match"}),   # YGOPRODeck full-name miss
+        Resp(200, {"data": [ygo_card]}),    # YGOPRODeck trailing-tokens hit
     ])
 
     from providers import catalog as catalog_module
@@ -349,15 +357,18 @@ def test_yugioh_tcgplayer_url_resolves_via_slug(client, monkeypatch):
 
     res = client.get(
         "/catalog/resolve",
-        params={
-            "url": "https://www.tcgplayer.com/product/687314/"
-                   "yugioh-rarity-collection-5-red-eyes-dark-dragoon",
-        },
+        params={"url": "https://www.tcgplayer.com/product/687314/"
+                       "yugioh-rarity-collection-5-red-eyes-dark-dragoon"},
     )
     assert res.status_code == 200
     body = res.json()
     assert body["external_source"] == "ygoprodeck"
     assert body["name"] == "Red-Eyes Dark Dragoon"
+    # Critical: the URL specified "Rarity Collection 5" — picker must land there
+    # and not on "25th Anniversary Rarity Collection II" or "Tin of Lost Memories".
+    assert body["set_name"] == "Rarity Collection 5"
+    assert body["rarity"] == "Starlight Rare"
+    # set_price was 0 -> filtered, so we fall back to card-wide tcgplayer_price.
     assert body["tcgplayer_price"] == 1.19
 
 

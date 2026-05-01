@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from .base import request_with_backoff
@@ -121,22 +121,30 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     # 3. Yu-Gi-Oh slug -> search YGOPRODeck by extracted name. YGOPRODeck's
     # fname is a strict substring match against the canonical card name, so a
     # hyphenated card (Red-Eyes Dark Dragoon) won't match "red eyes dark dragoon".
-    # Walk shrinking trailing N-grams to find the tightest substring that hits.
-    name = _slug_to_card_name(slug)
+    # Walk shrinking trailing N-grams to find the tightest substring that hits,
+    # then pin the printing whose set_name overlaps with the slug's set tokens.
+    set_tokens_str, name = _split_slug(slug)
+    # Keep digits — they're often the disambiguator between similarly-named
+    # printings (e.g. "Rarity Collection 5" vs "25th Anniversary Rarity Collection II").
+    set_tokens = set_tokens_str.split()
     if name and ("yugioh" in slug or "yu-gi-oh" in slug):
         tokens = name.split()
+        # YGOPRODeck returns the raw card payload — we need the per-printing
+        # detail in card_sets, so call the underlying API directly.
         for n in (len(tokens), 3, 2, 1):
             if n <= 0 or n > len(tokens):
                 continue
             cand = " ".join(tokens[-n:])
-            rows = _search_ygoprodeck(cand, limit=5)
-            if rows:
-                # Prefer the row whose lowercased name contains the most query tokens.
-                target = set(tokens)
-                rows.sort(
-                    key=lambda r: -len(target & set((r.get("name") or "").lower().replace("-", " ").split()))
-                )
-                return rows[0]
+            cards = _ygoprodeck_card_payloads(cand, limit=5)
+            if not cards:
+                continue
+            target = set(tokens)
+            cards.sort(
+                key=lambda c: -len(target & set((c.get("name") or "").lower().replace("-", " ").split()))
+            )
+            best = cards[0]
+            # Pick the printing closest to the URL's set tokens.
+            return _ygoprodeck_card_to_result(best, preferred_set_tokens=set_tokens)
     if name and "pokemon" in slug:
         rows = _search_pokemontcg(name, limit=1)
         if rows:
@@ -146,30 +154,38 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     return _scrape_tcgplayer_og(full_url, product_id)
 
 
-def _slug_to_card_name(slug: str) -> str:
-    """Extract a probable card name from a TCGplayer URL slug.
+def _split_slug(slug: str) -> Tuple[str, str]:
+    """Split a TCGplayer URL slug into (set_name_tokens, card_name_tokens).
 
-    Pattern is roughly ``<game>-<set-tokens>-<set-number>-<card-name-tokens>``
-    for Yu-Gi-Oh and ``<game>-<set-tokens>-<card-name-tokens>-<num>`` for Pokemon.
-    Strategy: drop the game prefix, find the first numeric token; tokens after
-    it are usually the card name. If nothing's after the digit, fall back to
-    the trailing tokens before it.
+    YGO/MTG pattern is ``<game>-<set-words>-<set-num>-<card-words>``; Pokemon is
+    ``<game>-<set-words>-<card-words>-<num>``. We use the first numeric token as
+    the divider — tokens before it are the set, tokens after are the card name.
+    Returns lowercase space-joined strings (empty when missing).
     """
     if not slug:
-        return ""
+        return "", ""
     parts = slug.split("-")
     if parts and parts[0] in {"yugioh", "yu", "pokemon", "magic", "mtg"}:
-        # 'yu-gi-oh' splits into ['yu','gi','oh',...] — drop those too
         if parts[0] == "yu" and len(parts) >= 3 and parts[1] == "gi" and parts[2] == "oh":
             parts = parts[3:]
         else:
             parts = parts[1:]
     digit_idx = next((i for i, p in enumerate(parts) if p.isdigit()), -1)
     if digit_idx >= 0 and digit_idx < len(parts) - 1:
-        return " ".join(parts[digit_idx + 1 :])
+        # YGO style: set tokens before the digit (digit itself often is part of
+        # the set, e.g. "Rarity Collection 5"), name tokens after.
+        return " ".join(parts[: digit_idx + 1]), " ".join(parts[digit_idx + 1 :])
     if digit_idx > 0:
-        return " ".join(parts[max(0, digit_idx - 3) : digit_idx])
-    return " ".join(parts)
+        # Pokemon-ish style: trailing digit is a collector number; everything
+        # before is set+card with no clean split. Best-effort: last 3 tokens
+        # are name, rest is set.
+        cut = max(0, digit_idx - 3)
+        return " ".join(parts[:cut]), " ".join(parts[cut:digit_idx])
+    return "", " ".join(parts)
+
+
+def _slug_to_card_name(slug: str) -> str:
+    return _split_slug(slug)[1]
 
 
 _META_TAG_RE = re.compile(r"<meta\b([^>]*)>", re.IGNORECASE)
@@ -309,19 +325,54 @@ def _pokemontcg_card_to_result(card: Dict) -> Dict:
     }
 
 
-def _ygoprodeck_card_to_result(card: Dict) -> Dict:
+def _ygoprodeck_card_to_result(card: Dict, preferred_set_tokens: Optional[List[str]] = None) -> Dict:
     prices = (card.get("card_prices") or [{}])[0]
     sets = card.get("card_sets") or []
+    chosen = _pick_yugioh_printing(sets, preferred_set_tokens or [])
+    set_name = (chosen or {}).get("set_name", "") if chosen else (sets[0].get("set_name") if sets else "")
+    # Per-printing price beats the card-wide aggregate when the user pinned a specific set.
+    set_price = _safe_float((chosen or {}).get("set_price"))
+    rarity = (chosen or {}).get("set_rarity") if chosen else None
     return {
         "external_source": "ygoprodeck",
         "external_id": str(card.get("id", "")),
         "name": card.get("name", ""),
-        "set_name": sets[0].get("set_name") if sets else "",
+        "set_name": set_name,
         "image_url": ((card.get("card_images") or [{}])[0]).get("image_url_small"),
-        "tcgplayer_price": _safe_float(prices.get("tcgplayer_price")),
+        "tcgplayer_price": set_price if set_price is not None else _safe_float(prices.get("tcgplayer_price")),
         "tcgplayer_price_foil": None,
-        "rarity": card.get("type"),
+        "rarity": rarity or card.get("type"),
     }
+
+
+def _pick_yugioh_printing(sets: List[Dict], target_tokens: List[str]) -> Optional[Dict]:
+    """Pick the printing whose set_name shares the most tokens with the URL slug."""
+    if not sets:
+        return None
+    if not target_tokens:
+        return sets[0]
+    target = set(t.lower() for t in target_tokens)
+    scored = []
+    for entry in sets:
+        name = (entry.get("set_name") or "").lower().replace("-", " ")
+        overlap = len(target & set(name.split()))
+        scored.append((overlap, entry))
+    scored.sort(key=lambda pair: -pair[0])
+    # Only prefer the matched printing when there's actual overlap.
+    return scored[0][1] if scored[0][0] > 0 else sets[0]
+
+
+def _ygoprodeck_card_payloads(query: str, limit: int) -> List[Dict]:
+    """Raw card dicts from YGOPRODeck (preserves card_sets so callers can pick a printing)."""
+    resp = request_with_backoff(
+        "GET",
+        "https://db.ygoprodeck.com/api/v7/cardinfo.php",
+        params={"fname": query, "num": limit, "offset": 0},
+        headers={"Accept": "application/json"},
+    )
+    if not resp or resp.status_code >= 400:
+        return []
+    return ((resp.json() or {}).get("data") or [])[:limit]
 
 
 def fetch_tcgplayer_price(
