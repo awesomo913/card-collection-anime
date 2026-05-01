@@ -343,6 +343,7 @@ def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
             return self._payload
 
     seq = iter([
+        Resp(200, {"marketPrice": 87.35, "rarityName": "Ultra Rare"}),  # TCG product API
         Resp(404, {"object": "error"}),     # Scryfall miss
         Resp(200, {"data": []}),            # PokemonTCG no match
         Resp(400, {"error": "no match"}),   # YGOPRODeck full-name miss
@@ -367,9 +368,10 @@ def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
     # Critical: the URL specified "Rarity Collection 5" — picker must land there
     # and not on "25th Anniversary Rarity Collection II" or "Tin of Lost Memories".
     assert body["set_name"] == "Rarity Collection 5"
-    assert body["rarity"] == "Starlight Rare"
-    # set_price was 0 -> filtered, so we fall back to card-wide tcgplayer_price.
-    assert body["tcgplayer_price"] == 1.19
+    # TCGplayer's own product API is the authoritative price source — overrides
+    # whatever the per-game catalog had as a card-wide aggregate.
+    assert body["rarity"] == "Ultra Rare"
+    assert body["tcgplayer_price"] == 87.35
 
 
 def test_profile_export_import_roundtrip(client):

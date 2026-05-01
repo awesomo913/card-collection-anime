@@ -89,12 +89,65 @@ def _resolve_scryfall_url(path: str) -> Optional[Dict]:
     return None
 
 
+def _tcgplayer_product_details(product_id: str) -> Optional[Dict]:
+    """Hit TCGplayer's own product-details API. No auth required — this is the
+    same endpoint the public product page uses to populate prices."""
+    resp = request_with_backoff(
+        "GET",
+        f"https://mp-search-api.tcgplayer.com/v1/product/{product_id}/details",
+        params={"mpfev": "2779"},
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+            "Origin": "https://www.tcgplayer.com",
+            "Referer": "https://www.tcgplayer.com/",
+        },
+        timeout=8.0,
+    )
+    if not resp or resp.status_code >= 400:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def _result_from_tcgplayer_details(product_id: str, details: Dict) -> Dict:
+    """Build a minimal CatalogResult from TCGplayer's own product API."""
+    name = details.get("productUrlName") or details.get("productName") or ""
+    if name:
+        name = name.replace(" - ", " — ").strip()
+    image_url = (
+        f"https://product-images.tcgplayer.com/fit-in/437x437/{product_id}.jpg"
+    )
+    return {
+        "external_source": "tcgplayer",
+        "external_id": str(product_id),
+        "name": name,
+        "set_name": details.get("setUrlName") or details.get("setName") or "",
+        "image_url": image_url,
+        "tcgplayer_price": _safe_float(details.get("marketPrice")),
+        "tcgplayer_price_foil": None,
+        "rarity": details.get("rarityName"),
+    }
+
+
 def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     m = re.match(r"^/product/(\d+)(?:/([^/?#]+))?", path)
     if not m:
         return None
     product_id = m.group(1)
     slug = (m.group(2) or "").lower()
+
+    # Always pre-fetch TCGplayer's own product details. We use these as the
+    # authoritative price source (the per-game catalogs return aggregate
+    # prices that don't reflect the specific printing the URL points at).
+    tcg_details = _tcgplayer_product_details(product_id)
+    tcg_price = _safe_float((tcg_details or {}).get("marketPrice"))
 
     # 1. Magic: Scryfall has /cards/tcgplayer/<id>.
     resp = request_with_backoff(
@@ -103,7 +156,10 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
         headers={"User-Agent": "card-collection-anime/1.0", "Accept": "application/json"},
     )
     if resp and resp.status_code == 200:
-        return _scryfall_card_to_result(resp.json())
+        out = _scryfall_card_to_result(resp.json())
+        if tcg_price is not None:
+            out["tcgplayer_price"] = tcg_price
+        return out
 
     # 2. Pokemon: PokemonTCG.io supports filtering by tcgplayer.url match.
     canonical = full_url.split("?", 1)[0]
@@ -116,7 +172,10 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     if resp and resp.status_code == 200:
         items = (resp.json() or {}).get("data") or []
         if items:
-            return _pokemontcg_card_to_result(items[0])
+            out = _pokemontcg_card_to_result(items[0])
+            if tcg_price is not None:
+                out["tcgplayer_price"] = tcg_price
+            return out
 
     # 3. Yu-Gi-Oh slug -> search YGOPRODeck by extracted name. YGOPRODeck's
     # fname is a strict substring match against the canonical card name, so a
@@ -144,13 +203,27 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
             )
             best = cards[0]
             # Pick the printing closest to the URL's set tokens.
-            return _ygoprodeck_card_to_result(best, preferred_set_tokens=set_tokens)
+            out = _ygoprodeck_card_to_result(best, preferred_set_tokens=set_tokens)
+            if tcg_price is not None:
+                out["tcgplayer_price"] = tcg_price
+            if (tcg_details or {}).get("rarityName"):
+                out["rarity"] = tcg_details["rarityName"]
+            return out
     if name and "pokemon" in slug:
         rows = _search_pokemontcg(name, limit=1)
         if rows:
-            return rows[0]
+            out = rows[0]
+            if tcg_price is not None:
+                out["tcgplayer_price"] = tcg_price
+            return out
 
-    # 4. Last resort — scrape the TCGplayer page itself for OG metadata.
+    # 4. TCGplayer's own product API as a primary fallback — gives us name +
+    # marketPrice + rarity even when none of the per-game catalogs know about
+    # this product (sealed boxes, presale items, etc.).
+    if tcg_details:
+        return _result_from_tcgplayer_details(product_id, tcg_details)
+
+    # 5. Last resort — scrape the TCGplayer page itself for OG metadata.
     return _scrape_tcgplayer_og(full_url, product_id)
 
 
@@ -387,11 +460,11 @@ def fetch_tcgplayer_price(
         if external_source == "ygoprodeck":
             return _ygoprodeck_price(external_id)
         if external_source == "tcgplayer":
-            # Re-scrape the product page to pick up any current OG price tag.
-            scraped = _scrape_tcgplayer_og(
-                f"https://www.tcgplayer.com/product/{external_id}", external_id
-            )
-            return scraped.get("tcgplayer_price") if scraped else None
+            # Hit TCGplayer's own product API — same data the public page uses.
+            details = _tcgplayer_product_details(external_id)
+            if details:
+                return _safe_float(details.get("marketPrice"))
+            return None
     except Exception as exc:
         logger.warning("Catalog price refresh failed (%s/%s): %s", external_source, external_id, exc)
     return None
