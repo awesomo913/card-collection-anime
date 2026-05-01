@@ -316,6 +316,135 @@ def test_catalog_resolve_tcgplayer_url_via_scryfall(client, monkeypatch):
     assert body["tcgplayer_price"] == 50000.0
 
 
+def test_yugioh_tcgplayer_url_resolves_via_slug(client, monkeypatch):
+    """YGO TCGplayer URL slug -> YGOPRODeck name search fallback."""
+    ygo_card = {
+        "id": 37818794,
+        "name": "Red-Eyes Dark Dragoon",
+        "card_sets": [{"set_name": "Rarity Collection 5"}],
+        "card_images": [{"image_url_small": "https://example.test/dragoon.jpg"}],
+        "card_prices": [{"tcgplayer_price": "1.19"}],
+        "type": "Fusion Monster",
+    }
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    seq = iter([
+        Resp(404, {"object": "error"}),                         # Scryfall miss
+        Resp(200, {"data": []}),                                # PokemonTCG no match
+        Resp(400, {"error": "no match"}),                       # YGOPRODeck full-name miss
+        Resp(200, {"data": [ygo_card]}),                        # YGOPRODeck trailing-tokens hit
+    ])
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: next(seq, Resp(404, {})),
+    )
+
+    res = client.get(
+        "/catalog/resolve",
+        params={
+            "url": "https://www.tcgplayer.com/product/687314/"
+                   "yugioh-rarity-collection-5-red-eyes-dark-dragoon",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["external_source"] == "ygoprodeck"
+    assert body["name"] == "Red-Eyes Dark Dragoon"
+    assert body["tcgplayer_price"] == 1.19
+
+
+def test_profile_export_import_roundtrip(client):
+    """Round-trip the entire collection through encrypted export/import."""
+    # Seed two cards
+    client.post("/cards/", json={"name": "Card A", "set_name": "S1", "game": "magic"})
+    client.post("/cards/", json={"name": "Card B", "set_name": "S2", "game": "pokemon"})
+
+    pre_count = len(client.get("/cards/").json())
+    assert pre_count >= 2
+
+    # Export
+    exp = client.post("/profile/export", json={"password": "hunter2"})
+    assert exp.status_code == 200
+    blob = exp.text
+    assert blob.startswith("CARD_COLLECTION_BACKUP")
+    assert "salt:" in blob and "data:" in blob
+    assert "Card A" not in blob  # plaintext name should not leak through encryption
+
+    # Wrong password -> 400
+    bad = client.post("/profile/import", json={
+        "password": "wrong", "encrypted": blob, "replace": True,
+    })
+    assert bad.status_code == 400
+
+    # Right password -> rows restored, count matches
+    ok = client.post("/profile/import", json={
+        "password": "hunter2", "encrypted": blob, "replace": True,
+    })
+    assert ok.status_code == 200
+    restored = ok.json()["restored"]
+    assert restored["cards"] == pre_count
+    after_cards = client.get("/cards/").json()
+    assert {c["name"] for c in after_cards} >= {"Card A", "Card B"}
+
+
+def test_profile_import_rejects_garbage(client):
+    res = client.post("/profile/import", json={
+        "password": "x", "encrypted": "this is not a backup", "replace": True,
+    })
+    assert res.status_code == 400
+
+
+def test_catalog_search_sealed_pokemon_returns_empty(client):
+    """Sealed mode + non-Magic game must return [] (those APIs only carry singles)."""
+    res = client.get("/catalog/search", params={"q": "booster box", "game": "pokemon", "sealed": "true"})
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_tcgplayer_url_falls_back_to_og_scrape(client, monkeypatch):
+    """When Scryfall and PokemonTCG.io both miss, resolve scrapes the TCG page."""
+    fake_html = (
+        '<html><head>'
+        '<meta property="og:title" content="Pikachu V Box - Pokemon" />'
+        '<meta property="og:image" content="https://example.test/box.jpg" />'
+        '<meta property="product:price:amount" content="29.99" />'
+        '</head></html>'
+    )
+
+    miss = type("R", (), {"status_code": 404, "json": lambda self: {}})()
+    hit = type("R", (), {"status_code": 200, "text": fake_html, "json": lambda self: {}})()
+
+    calls = {"n": 0}
+
+    def fake_request(*args, **kwargs):
+        calls["n"] += 1
+        # First two calls are the Scryfall + PokemonTCG.io misses; third is the OG scrape.
+        return hit if calls["n"] >= 3 else miss
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "request_with_backoff", fake_request)
+
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://www.tcgplayer.com/product/99999/pikachu-v-box"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["external_source"] == "tcgplayer"
+    assert body["external_id"] == "99999"
+    assert body["name"] == "Pikachu V Box - Pokemon"
+    assert body["image_url"] == "https://example.test/box.jpg"
+    assert body["tcgplayer_price"] == 29.99
+
+
 def test_create_card_with_external_id_uses_catalog_price(client, monkeypatch):
     """When a card is linked to a catalog ID, current_price should reflect the
     catalog-derived TCGplayer price even with no provider creds."""

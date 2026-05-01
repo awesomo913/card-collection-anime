@@ -11,7 +11,7 @@ import api from '../services/api';
  * Renders a search input + result grid. Debounces keystrokes by 350ms before
  * hitting /catalog/search to keep traffic to the public APIs civilized.
  */
-const CatalogSearch = ({ game, onPick }) => {
+const CatalogSearch = ({ game, onPick, sealed = false }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState('idle');
@@ -47,7 +47,7 @@ const CatalogSearch = ({ game, onPick }) => {
             setStatus('empty');
           }
         } else {
-          const res = await api.searchCatalog(trimmed, game);
+          const res = await api.searchCatalog(trimmed, game, { sealed });
           setResults(res.data || []);
           setStatus((res.data || []).length === 0 ? 'empty' : 'idle');
         }
@@ -57,15 +57,21 @@ const CatalogSearch = ({ game, onPick }) => {
       }
     }, 350);
     return () => clearTimeout(debounceRef.current);
-  }, [query, game]);
+  }, [query, game, sealed]);
 
   return (
     <div className="catalog-search">
       <label className="catalog-search-label">
-        Search TCG by name — or paste a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL
+        {sealed
+          ? 'Paste a TCGplayer / Scryfall URL — or search Magic sealed by name'
+          : 'Search TCG by name — or paste a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL'}
         <input
           type="text"
-          placeholder={`Search ${game} or paste a URL…`}
+          placeholder={
+            sealed
+              ? 'Paste a TCGplayer URL or search Magic sealed…'
+              : `Search ${game} or paste a URL…`
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

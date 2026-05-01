@@ -65,9 +65,19 @@ def get_sealed_products(db: Session, skip: int = 0, limit: int = 100):
 
 def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
     db_sealed = models.SealedProduct(**sealed.model_dump())
-    sources = fetch_sealed_prices_all_sources(
-        db_sealed.name, db_sealed.set_name, db_sealed.product_type, db_sealed.game,
-    )
+    # Pinned to a catalog entry? Try the catalog first for an authoritative price.
+    sources: dict = {}
+    if db_sealed.external_source and db_sealed.external_id:
+        from providers import catalog as catalog_module
+        catalog_price = catalog_module.fetch_tcgplayer_price(
+            db_sealed.external_source, db_sealed.external_id, is_foil=False
+        )
+        if catalog_price is not None:
+            sources["TCGPlayer"] = round(float(catalog_price), 2)
+    if not sources:
+        sources = fetch_sealed_prices_all_sources(
+            db_sealed.name, db_sealed.set_name, db_sealed.product_type, db_sealed.game,
+        )
     db_sealed.price_sources = sources or None
     db_sealed.current_price = (
         round(sum(sources.values()) / len(sources), 2) if sources else None

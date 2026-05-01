@@ -682,3 +682,32 @@ form button { margin-right: 10px; }
   background: rgba(0, 0, 0, 0.45);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
 }
+
+/* ---------- Settings / Backup page ---------- */
+
+.settings-page { max-width: 720px; }
+.settings-page h2 { margin-bottom: 18px; }
+.settings-card {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 22px;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-deep);
+}
+.settings-card h3 {
+  margin: 0 0 8px 0;
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.04em;
+}
+.muted {
+  color: var(--text-mute);
+  font-size: 0.86rem;
+  margin: 0 0 16px 0;
+}
+.success-msg {
+  margin-top: 12px;
+  color: var(--neon-cyan);
+  font-size: 0.9rem;
+}

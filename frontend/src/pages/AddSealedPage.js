@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
+import CatalogSearch from '../components/CatalogSearch';
 import { PRODUCT_TYPES_BY_GAME } from '../data/options';
 
 const EMPTY = {
@@ -11,6 +12,9 @@ const EMPTY = {
   purchase_price: '',
   game: 'magic',
   notes: '',
+  external_source: null,
+  external_id: null,
+  image_url: null,
 };
 
 const AddSealedPage = () => {
@@ -35,6 +39,25 @@ const AddSealedPage = () => {
     setSealed((prev) => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value,
+    }));
+  };
+
+  // Catalog pick: pull name + set + image + external linkage. We deliberately
+  // leave product_type alone since the catalog source rarely knows it cleanly.
+  const handlePick = (result) => {
+    const sourceToGame = {
+      scryfall: 'magic',
+      pokemontcg: 'pokemon',
+      ygoprodeck: 'yugioh',
+    };
+    setSealed((prev) => ({
+      ...prev,
+      name: result.name || prev.name,
+      set_name: result.set_name || prev.set_name,
+      game: sourceToGame[result.external_source] || prev.game,
+      external_source: result.external_source,
+      external_id: result.external_id,
+      image_url: result.image_url || null,
     }));
   };
 
@@ -71,15 +94,40 @@ const AddSealedPage = () => {
       <h2>{id ? 'Edit Sealed Product' : 'Add Sealed Product'}</h2>
       {error && <div className="error">{error}</div>}
 
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label>Game</label>
-          <select name="game" value={sealed.game} onChange={handleChange}>
-            <option value="magic">Magic: The Gathering</option>
-            <option value="pokemon">Pokémon</option>
-            <option value="yugioh">Yu-Gi-Oh!</option>
-          </select>
+      {!id && (
+        <div className="catalog-search-host">
+          <div className="catalog-game-row">
+            <label>
+              Game
+              <select name="game" value={sealed.game} onChange={handleChange}>
+                <option value="magic">Magic: The Gathering</option>
+                <option value="pokemon">Pokémon</option>
+                <option value="yugioh">Yu-Gi-Oh!</option>
+              </select>
+            </label>
+            {sealed.external_source && sealed.external_id && (
+              <span className="linked-badge" title={`${sealed.external_source}:${sealed.external_id}`}>
+                ✓ Linked to {sealed.external_source}
+              </span>
+            )}
+          </div>
+          <CatalogSearch game={sealed.game} onPick={handlePick} sealed />
+          <p className="catalog-hint">
+            Paste a TCGplayer URL (any game) and we'll pull the product info. Magic
+            sealed also supports name search via Scryfall. Pokémon and Yu-Gi-Oh
+            sealed: paste a TCGplayer URL — we extract name + image (price you can
+            enter manually if not found).
+          </p>
         </div>
+      )}
+
+      <form onSubmit={handleSubmit}>
+        {sealed.image_url && (
+          <div className="form-image-preview">
+            <img src={sealed.image_url} alt={sealed.name || 'Product preview'} />
+          </div>
+        )}
+
         <div>
           <label>Name</label>
           <input type="text" name="name" value={sealed.name} onChange={handleChange} required />
@@ -113,6 +161,16 @@ const AddSealedPage = () => {
           <label>Purchase Price</label>
           <input type="number" name="purchase_price" value={sealed.purchase_price ?? ''} onChange={handleChange} step="0.01" />
         </div>
+        {id && (
+          <div>
+            <label>Game</label>
+            <select name="game" value={sealed.game} onChange={handleChange}>
+              <option value="magic">Magic: The Gathering</option>
+              <option value="pokemon">Pokémon</option>
+              <option value="yugioh">Yu-Gi-Oh!</option>
+            </select>
+          </div>
+        )}
         <div>
           <label>Notes</label>
           <textarea name="notes" value={sealed.notes || ''} onChange={handleChange} />

@@ -50,11 +50,19 @@ const AddCardPage = () => {
   // catalog fields into the form and pin external_source/external_id so the
   // backend will refresh prices via that exact catalog ID forever after.
   const handlePick = (result) => {
+    const sourceToGame = {
+      scryfall: 'magic',
+      pokemontcg: 'pokemon',
+      ygoprodeck: 'yugioh',
+    };
     setCard((prev) => ({
       ...prev,
       name: result.name || prev.name,
       set_name: result.set_name || prev.set_name,
       rarity: result.rarity || prev.rarity,
+      // Sync the game dropdown to whichever catalog the result came from.
+      // (For 'tcgplayer' OG-scrape results we can't tell, so we leave game alone.)
+      game: sourceToGame[result.external_source] || prev.game,
       external_source: result.external_source,
       external_id: result.external_id,
       image_url: result.image_url || null,

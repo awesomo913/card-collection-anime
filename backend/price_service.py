@@ -161,9 +161,17 @@ def update_all_prices() -> None:
             card.last_price_update = now
 
         for sealed in db.query(models.SealedProduct).all():
-            prices = fetch_sealed_prices_all_sources(
-                sealed.name, sealed.set_name, sealed.product_type, sealed.game
-            )
+            prices: Dict[str, float] = {}
+            if sealed.external_source and sealed.external_id:
+                catalog_price = catalog.fetch_tcgplayer_price(
+                    sealed.external_source, sealed.external_id, is_foil=False
+                )
+                if catalog_price is not None:
+                    prices["TCGPlayer"] = round(float(catalog_price), 2)
+            if not prices:
+                prices = fetch_sealed_prices_all_sources(
+                    sealed.name, sealed.set_name, sealed.product_type, sealed.game
+                )
             for source, price in prices.items():
                 try:
                     log_price_history(db, "sealed", sealed.id, source, price, ts=now)

@@ -86,6 +86,16 @@ class SealedProduct(SealedProductBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BackupExportRequest(BaseModel):
+    password: str
+
+
+class BackupImportRequest(BaseModel):
+    password: str
+    encrypted: str
+    replace: bool = True
+
+
 class CatalogResult(BaseModel):
     """One row of catalog search output, normalized across game-specific APIs."""
     external_source: str

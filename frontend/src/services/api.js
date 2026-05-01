@@ -28,19 +28,26 @@ export const getPriceHistory = (itemType, itemId) =>
   api.get(`/price-history/${itemType}/${itemId}`);
 
 // Live catalog search (game: 'magic' | 'pokemon' | 'yugioh')
-export const searchCatalog = (q, game, limit = 12) =>
-  api.get('/catalog/search', { params: { q, game, limit } });
+export const searchCatalog = (q, game, { limit = 12, sealed = false } = {}) =>
+  api.get('/catalog/search', { params: { q, game, limit, sealed } });
 
 // Resolve a catalog URL (Scryfall / TCGplayer / PokemonTCG.io / YGOPRODeck)
 // to a single CatalogResult.
 export const resolveCatalogUrl = (url) =>
   api.get('/catalog/resolve', { params: { url } });
 
+// Encrypted backup: server returns the cipher-text blob; client downloads it.
+export const exportProfile = (password) =>
+  api.post('/profile/export', { password }, { responseType: 'text', transformResponse: (x) => x });
+export const importProfile = (encrypted, password, replace = true) =>
+  api.post('/profile/import', { encrypted, password, replace });
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
   getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory,
   searchCatalog, resolveCatalogUrl,
+  exportProfile, importProfile,
 };
 
 export default apiClient;

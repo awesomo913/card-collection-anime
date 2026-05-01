@@ -8,8 +8,10 @@ import crud, models, schemas
 from database import SessionLocal, engine
 from price_service import update_all_prices
 from providers import catalog as catalog_module
+import profile_backup
 from scheduler import start_scheduler
 import uvicorn
+from fastapi.responses import PlainTextResponse
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -140,6 +142,27 @@ def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@app.post("/profile/export", response_class=PlainTextResponse)
+def profile_export(req: schemas.BackupExportRequest, db: Session = Depends(get_db)):
+    """Return an encrypted text blob containing the entire collection."""
+    if not req.password:
+        raise HTTPException(status_code=400, detail="password is required")
+    try:
+        return profile_backup.export_profile(db, req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/profile/import")
+def profile_import(req: schemas.BackupImportRequest, db: Session = Depends(get_db)):
+    """Decrypt + restore a previously exported backup. Wrong password -> 400."""
+    try:
+        counts = profile_backup.import_profile(db, req.encrypted, req.password, replace=req.replace)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"restored": counts}
+
+
 @app.get("/catalog/resolve", response_model=schemas.CatalogResult)
 def catalog_resolve(url: str):
     """Resolve a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL to a single
@@ -153,18 +176,22 @@ def catalog_resolve(url: str):
 
 
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])
-def catalog_search(q: str, game: str, limit: int = 12):
+def catalog_search(q: str, game: str, limit: int = 12, sealed: bool = False):
     """Live search the public catalog for the chosen game.
 
     Returns normalized rows (image, set, TCGplayer price) the frontend can pin to
     a new card so future refreshes hit the exact catalog ID instead of guessing
-    by name.
+    by name. Pass ``sealed=true`` to constrain Magic searches to sealed product;
+    Pokemon and Yu-Gi-Oh return [] in sealed mode (their public APIs only carry
+    single cards — use the URL paste flow for those instead).
     """
     if not q or len(q.strip()) < 2:
         return []
     if game.lower() not in {"magic", "pokemon", "yugioh"}:
         raise HTTPException(status_code=400, detail="game must be magic, pokemon, or yugioh")
-    return catalog_module.search(q.strip(), game.lower(), limit=min(max(1, limit), 24))
+    return catalog_module.search(
+        q.strip(), game.lower(), limit=min(max(1, limit), 24), sealed=sealed
+    )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
