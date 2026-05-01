@@ -50,14 +50,14 @@ if ! command -v npm >/dev/null 2>&1; then
     rm -rf "$TMP"
   fi
   log "installing Node 20 via fnm"
-  eval "$("$FNM_DIR/fnm" env --shell bash)"
+  eval "$("$FNM_DIR/fnm" env --shell bash)"  # safe: fnm env outputs fixed shell vars from a trusted CLI
   "$FNM_DIR/fnm" install 20 >/dev/null
   "$FNM_DIR/fnm" use 20 >/dev/null
 fi
 
 # Re-evaluate fnm env so node/npm are on PATH for the rest of the script
 if [ -x "$FNM_DIR/fnm" ]; then
-  eval "$("$FNM_DIR/fnm" env --shell bash 2>/dev/null || true)"
+  eval "$("$FNM_DIR/fnm" env --shell bash 2>/dev/null || true)"  # safe: fnm env outputs fixed shell vars from a trusted CLI
 fi
 
 # --- Frontend build (single-port mode: API base = same origin) ---

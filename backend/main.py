@@ -51,7 +51,7 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/")
+@app.get("/api")
 def read_root():
     return {"message": "Card Collection API"}
 
