@@ -24,7 +24,7 @@ fi
 
 # --- Apply pending Alembic migrations (idempotent: no-op if already at head) ---
 log "alembic upgrade head"
-(cd backend && ../backend/venv/bin/alembic upgrade head) || \
+(cd backend && "$ROOT/backend/venv/bin/alembic" upgrade head) || \
   log "alembic upgrade failed (continuing — likely no migrations or fresh DB)"
 
 # --- Node.js (user-space via fnm if apt-installed npm is missing) ---
