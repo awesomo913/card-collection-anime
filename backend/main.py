@@ -1,8 +1,10 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 import crud, models, schemas
 from database import SessionLocal, engine
@@ -16,6 +18,50 @@ import uvicorn
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+logger = logging.getLogger(__name__)
+
+
+def _self_heal_schema() -> None:
+    """Idempotent ALTER TABLE for any model column missing on the live DB.
+
+    Why this exists: ``Base.metadata.create_all`` only creates missing TABLES,
+    not missing COLUMNS. When models gain new optional columns (e.g. the
+    ``tcgplayer_product_id`` added in migration b2c3d4e5f6a7), an existing
+    SQLite DB needs an ALTER TABLE. Alembic does this properly but is easy
+    to forget on hand-rolled deploys; this is a belt-and-suspenders fallback
+    so a schema bump never strands a running Pi.
+
+    Walks every mapped model, compares to actual DB columns via SQLAlchemy
+    inspector, and ALTERs in any missing nullable column. Safe to call on
+    every boot — no-op when schema is current.
+    """
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for mapper in models.Base.registry.mappers:
+            table = mapper.local_table
+            if table.name not in existing_tables:
+                continue  # create_all() will handle it next.
+            live_cols = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in live_cols:
+                    continue
+                # Only auto-add columns the model marked nullable. Adding
+                # a NOT NULL column without a default would brick existing rows.
+                if not col.nullable:
+                    logger.warning(
+                        "Skipping schema self-heal for %s.%s: NOT NULL "
+                        "without default. Run a real Alembic migration.",
+                        table.name, col.name,
+                    )
+                    continue
+                col_type = col.type.compile(dialect=engine.dialect)
+                stmt = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}'
+                logger.info("schema self-heal: %s", stmt)
+                conn.execute(text(stmt))
+
+
+_self_heal_schema()
 models.Base.metadata.create_all(bind=engine)
 
 
