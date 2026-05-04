@@ -64,17 +64,26 @@ def fetch_card_prices_all_sources(
     is_foil: bool = False,
     external_source: Optional[str] = None,
     external_id: Optional[str] = None,
+    tcgplayer_product_id: Optional[str] = None,
 ) -> Dict[str, float]:
     """Aggregate prices for a card.
 
     When the card was linked to a public catalog (Scryfall / PokemonTCG.io / YGOPRODeck)
     we trust that source for the TCGPlayer price — it is keyed by an exact catalog ID
     instead of fuzzy name matching. Other configured providers still run on top.
+
+    ``tcgplayer_product_id`` is preferred over the per-game catalog because TCGplayer's
+    ``marketPrice`` is per-printing, while per-game catalogs sometimes carry zero or
+    aggregate-only prices (Yu-Gi-Oh! Starlight Rare being the canonical example).
     """
     out: Dict[str, float] = {}
-    if external_source and external_id:
+    if (external_source and external_id) or tcgplayer_product_id:
         catalog_price = catalog.fetch_tcgplayer_price(
-            external_source, external_id, is_foil, set_name=set_name
+            external_source or "",
+            external_id or "",
+            is_foil,
+            set_name=set_name,
+            tcgplayer_product_id=tcgplayer_product_id,
         )
         if catalog_price is not None:
             out["TCGPlayer"] = round(float(catalog_price), 2)
@@ -120,10 +129,12 @@ def fetch_card_price(
     is_foil: bool = False,
     external_source: Optional[str] = None,
     external_id: Optional[str] = None,
+    tcgplayer_product_id: Optional[str] = None,
 ) -> Optional[float]:
     prices = fetch_card_prices_all_sources(
         name, set_name, game, is_foil,
         external_source=external_source, external_id=external_id,
+        tcgplayer_product_id=tcgplayer_product_id,
     )
     return round(sum(prices.values()) / len(prices), 2) if prices else None
 
@@ -148,6 +159,7 @@ def update_all_prices() -> None:
                 card.name, card.set_name, card.game, card.is_foil,
                 external_source=card.external_source,
                 external_id=card.external_id,
+                tcgplayer_product_id=card.tcgplayer_product_id,
             )
             for source, price in prices.items():
                 try:
@@ -164,10 +176,12 @@ def update_all_prices() -> None:
 
         for sealed in db.query(models.SealedProduct).all():
             prices: Dict[str, float] = {}
-            if sealed.external_source and sealed.external_id:
+            if (sealed.external_source and sealed.external_id) or sealed.tcgplayer_product_id:
                 catalog_price = catalog.fetch_tcgplayer_price(
-                    sealed.external_source, sealed.external_id, is_foil=False,
+                    sealed.external_source or "", sealed.external_id or "",
+                    is_foil=False,
                     set_name=sealed.set_name,
+                    tcgplayer_product_id=sealed.tcgplayer_product_id,
                 )
                 if catalog_price is not None:
                     prices["TCGPlayer"] = round(float(catalog_price), 2)

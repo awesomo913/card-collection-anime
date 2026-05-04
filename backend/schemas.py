@@ -18,6 +18,7 @@ class CardBase(BaseModel):
     external_source: Optional[str] = None
     external_id: Optional[str] = None
     image_url: Optional[str] = None
+    tcgplayer_product_id: Optional[str] = None
 
 class CardCreate(CardBase):
     pass
@@ -38,6 +39,7 @@ class CardUpdate(BaseModel):
     external_source: Optional[str] = None
     external_id: Optional[str] = None
     image_url: Optional[str] = None
+    tcgplayer_product_id: Optional[str] = None
 
 class Card(CardBase):
     id: int
@@ -61,6 +63,7 @@ class SealedProductBase(BaseModel):
     external_source: Optional[str] = None
     external_id: Optional[str] = None
     image_url: Optional[str] = None
+    tcgplayer_product_id: Optional[str] = None
 
 class SealedProductCreate(SealedProductBase):
     pass
@@ -74,6 +77,10 @@ class SealedProductUpdate(BaseModel):
     current_price: Optional[float] = None
     game: Optional[str] = None
     notes: Optional[str] = None
+    external_source: Optional[str] = None
+    external_id: Optional[str] = None
+    image_url: Optional[str] = None
+    tcgplayer_product_id: Optional[str] = None
 
 class SealedProduct(SealedProductBase):
     id: int
@@ -106,3 +113,7 @@ class CatalogResult(BaseModel):
     tcgplayer_price: Optional[float] = None
     tcgplayer_price_foil: Optional[float] = None
     rarity: Optional[str] = None
+    # When the lookup went through TCGplayer (URL paste resolver), the underlying
+    # product ID. Frontend forwards this on save so refresh can hit TCGplayer's
+    # product details API directly for an authoritative per-printing price.
+    tcgplayer_product_id: Optional[str] = None

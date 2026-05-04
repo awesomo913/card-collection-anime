@@ -22,6 +22,11 @@ if [ ! -x backend/venv/bin/uvicorn ]; then
   backend/venv/bin/pip install -r backend/requirements.txt
 fi
 
+# --- Apply pending Alembic migrations (idempotent: no-op if already at head) ---
+log "alembic upgrade head"
+(cd backend && ../backend/venv/bin/alembic upgrade head) || \
+  log "alembic upgrade failed (continuing — likely no migrations or fresh DB)"
+
 # --- Node.js (user-space via fnm if apt-installed npm is missing) ---
 # Pi OS Bookworm doesn't ship npm by default, and we have no sudo. fnm is a
 # single static binary that drops Node into ~/.local/share/fnm/, no root needed.

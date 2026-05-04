@@ -15,6 +15,7 @@ const EMPTY = {
   external_source: null,
   external_id: null,
   image_url: null,
+  tcgplayer_product_id: null,
 };
 
 const AddSealedPage = () => {
@@ -58,6 +59,7 @@ const AddSealedPage = () => {
       external_source: result.external_source,
       external_id: result.external_id,
       image_url: result.image_url || null,
+      tcgplayer_product_id: result.tcgplayer_product_id || prev.tcgplayer_product_id || null,
     }));
   };
 

@@ -133,6 +133,7 @@ def _result_from_tcgplayer_details(product_id: str, details: Dict) -> Dict:
         "tcgplayer_price": _safe_float(details.get("marketPrice")),
         "tcgplayer_price_foil": None,
         "rarity": details.get("rarityName"),
+        "tcgplayer_product_id": str(product_id),
     }
 
 
@@ -159,6 +160,7 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
         out = _scryfall_card_to_result(resp.json())
         if tcg_price is not None:
             out["tcgplayer_price"] = tcg_price
+        out["tcgplayer_product_id"] = product_id
         return out
 
     # 2. Pokemon: PokemonTCG.io supports filtering by tcgplayer.url match.
@@ -175,6 +177,7 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
             out = _pokemontcg_card_to_result(items[0])
             if tcg_price is not None:
                 out["tcgplayer_price"] = tcg_price
+            out["tcgplayer_product_id"] = product_id
             return out
 
     # 3. Yu-Gi-Oh / Pokemon. We prefer TCGplayer's own ``productName`` as the
@@ -228,6 +231,7 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
                 out["tcgplayer_price"] = tcg_price
             if (tcg_details or {}).get("rarityName"):
                 out["rarity"] = tcg_details["rarityName"]
+            out["tcgplayer_product_id"] = product_id
             return out
     if is_pokemon and (api_name or name):
         for cand in (api_name, name):
@@ -238,6 +242,7 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
                 out = rows[0]
                 if tcg_price is not None:
                     out["tcgplayer_price"] = tcg_price
+                out["tcgplayer_product_id"] = product_id
                 return out
 
     # 4. TCGplayer's own product API as a primary fallback — gives us name +
@@ -396,6 +401,7 @@ def _scrape_tcgplayer_og(url: str, product_id: str) -> Optional[Dict]:
         "tcgplayer_price": price,
         "tcgplayer_price_foil": None,
         "rarity": None,
+        "tcgplayer_product_id": product_id,
     }
 
 
@@ -524,16 +530,31 @@ def fetch_tcgplayer_price(
     external_id: str,
     is_foil: bool = False,
     set_name: Optional[str] = None,
+    tcgplayer_product_id: Optional[str] = None,
 ) -> Optional[float]:
     """Refresh the authoritative TCGplayer price for a previously linked card.
 
-    ``set_name`` is used by the YGOPRODeck path to pick the matching printing.
-    YGOPRODeck's ``card_prices`` is averaged across every printing of a card,
-    so a Starlight Rare Dark Magician would otherwise resolve to the cheapest
-    reprint price (e.g. $0.22) instead of the printing-specific one (e.g. $9.67).
-    Scryfall and PokemonTCG.io key prices per card ID natively, so they ignore it.
+    Priority order:
+    1. ``tcgplayer_product_id`` (when present): hit TCGplayer's product details
+       API for ``marketPrice``. This is the per-printing source of truth — used
+       for any card imported via TCGplayer URL paste, regardless of which catalog
+       the metadata came from. Critical for YGO printings whose YGOPRODeck
+       per-printing ``set_price`` is zero (Starlight Rare, Ghost Rare, etc).
+    2. Per-source path keyed by ``external_id``. Scryfall/PokemonTCG.io return
+       per-card-ID prices natively. YGOPRODeck only carries card-wide aggregates
+       so ``set_name`` is used to pick the matching printing as a best-effort.
     """
     try:
+        # 1. TCGplayer-pinned: most accurate, available whenever the user
+        #    imported via URL paste.
+        if tcgplayer_product_id:
+            details = _tcgplayer_product_details(tcgplayer_product_id)
+            if details:
+                market = _safe_float(details.get("marketPrice"))
+                if market is not None:
+                    return market
+            # Fall through to per-source path if TCGplayer details are unavailable.
+
         if external_source == "scryfall":
             return _scryfall_price(external_id, is_foil)
         if external_source == "pokemontcg":
@@ -541,7 +562,7 @@ def fetch_tcgplayer_price(
         if external_source == "ygoprodeck":
             return _ygoprodeck_price(external_id, set_name=set_name)
         if external_source == "tcgplayer":
-            # Hit TCGplayer's own product API — same data the public page uses.
+            # external_id IS the TCGplayer product_id in this branch.
             details = _tcgplayer_product_details(external_id)
             if details:
                 return _safe_float(details.get("marketPrice"))

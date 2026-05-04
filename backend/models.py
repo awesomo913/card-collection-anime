@@ -26,6 +26,11 @@ class Card(Base):
     external_source = Column(String, nullable=True)  # 'scryfall'|'pokemontcg'|'ygoprodeck'
     external_id = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+    # TCGplayer product ID (separate from external_id). Stored when the card was
+    # imported from a TCGplayer URL so refreshes can hit TCGplayer's product
+    # details API directly — its marketPrice is per-printing, while YGOPRODeck
+    # only carries card-wide aggregates and zero-data per-printing entries.
+    tcgplayer_product_id = Column(String, nullable=True)
 
 class SealedProduct(Base):
     __tablename__ = "sealed_products"
@@ -45,6 +50,7 @@ class SealedProduct(Base):
     external_source = Column(String, nullable=True)
     external_id = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
+    tcgplayer_product_id = Column(String, nullable=True)
 
 class PriceHistory(Base):
     __tablename__ = "price_history"

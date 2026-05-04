@@ -19,6 +19,7 @@ const EMPTY_CARD = {
   external_source: null,
   external_id: null,
   image_url: null,
+  tcgplayer_product_id: null,
 };
 
 const AddCardPage = () => {
@@ -66,6 +67,10 @@ const AddCardPage = () => {
       external_source: result.external_source,
       external_id: result.external_id,
       image_url: result.image_url || null,
+      // Pin TCGplayer product ID when present so future refreshes hit
+      // TCGplayer's marketPrice (per-printing) instead of the catalog source's
+      // aggregate or zero-data per-printing entry (e.g. YGOPRODeck Starlight Rare).
+      tcgplayer_product_id: result.tcgplayer_product_id || prev.tcgplayer_product_id || null,
     }));
   };
 

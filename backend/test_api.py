@@ -550,6 +550,92 @@ def test_ygoprodeck_price_picks_per_printing_when_set_name_given(monkeypatch):
     assert no_match == 0.22
 
 
+def test_fetch_tcgplayer_price_prefers_product_id_over_ygoprodeck(monkeypatch):
+    """When a card was imported via TCGplayer URL, ``tcgplayer_product_id`` is the
+    authoritative source — refresh hits TCGplayer's product details API for the
+    per-printing marketPrice. Critical for YGO printings where YGOPRODeck's
+    set_price is literally "0" (Starlight Rare, Ghost Rare, etc), which would
+    otherwise leak through and the refresh would land on the card-wide aggregate.
+    """
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    # Whatever TCGplayer details would return for the Starlight Rare printing.
+    tcg_details = {
+        "marketPrice": 9.72,
+        "rarityName": "Starlight Rare",
+        "productName": "Dark Magician (Starlight Rare)",
+    }
+    # YGOPRODeck would return aggregate $0.22 (the bug we're guarding against).
+    ygo_card = {
+        "id": 46986414,
+        "name": "Dark Magician",
+        "card_sets": [{"set_name": "Rarity Collection 5",
+                       "set_rarity": "Starlight Rare", "set_price": "0"}],
+        "card_prices": [{"tcgplayer_price": "0.22"}],
+    }
+
+    seq = iter([Resp(200, tcg_details), Resp(200, {"data": [ygo_card]})])
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: next(seq, Resp(404, {})),
+    )
+
+    # With tcgplayer_product_id -> should hit TCGplayer first and return $9.72
+    price = catalog_module.fetch_tcgplayer_price(
+        "ygoprodeck", "46986414", set_name="Rarity Collection 5",
+        tcgplayer_product_id="687196",
+    )
+    assert price == 9.72
+
+
+def test_resolve_tcgplayer_url_returns_tcgplayer_product_id(monkeypatch, client):
+    """The resolver result must include ``tcgplayer_product_id`` so the frontend
+    can pin it on save. Without it, the refresh path can't reach back to
+    TCGplayer's authoritative price.
+    """
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    ygo_card = {
+        "id": 46986414, "name": "Dark Magician",
+        "card_sets": [{"set_name": "Rarity Collection 5",
+                       "set_rarity": "Starlight Rare", "set_price": "0"}],
+        "card_images": [{"image_url_small": "https://example.test/dm.jpg"}],
+        "card_prices": [{"tcgplayer_price": "0.22"}],
+    }
+    seq = iter([
+        Resp(200, {"marketPrice": 9.72, "productName": "Dark Magician (Starlight Rare)",
+                   "productLineName": "YuGiOh", "rarityName": "Starlight Rare"}),
+        Resp(404, {}),                           # Scryfall miss
+        Resp(200, {"data": []}),                 # PokemonTCG no match
+        Resp(200, {"data": [ygo_card]}),         # YGOPRODeck hit
+    ])
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: next(seq, Resp(404, {})),
+    )
+
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://www.tcgplayer.com/product/687196/"
+                       "yugioh-rarity-collection-5-dark-magician-starlight-rare"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["tcgplayer_product_id"] == "687196"
+
+
 def test_profile_export_import_roundtrip(client):
     """Round-trip the entire collection through encrypted export/import."""
     # Seed two cards

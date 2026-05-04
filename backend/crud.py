@@ -22,6 +22,7 @@ def create_card(db: Session, card: schemas.CardCreate):
         db_card.name, db_card.set_name, db_card.game, db_card.is_foil,
         external_source=db_card.external_source,
         external_id=db_card.external_id,
+        tcgplayer_product_id=db_card.tcgplayer_product_id,
     )
     db_card.price_sources = sources or None
     db_card.current_price = (
@@ -38,12 +39,14 @@ def update_card(db: Session, card_id: int, card: schemas.CardUpdate):
         for key, value in card.model_dump(exclude_unset=True).items():
             setattr(db_card, key, value)
         # Re-fetch price when any pricing-relevant field changed.
-        relevant = {"name", "set_name", "game", "is_foil"}
+        relevant = {"name", "set_name", "game", "is_foil", "tcgplayer_product_id",
+                    "external_source", "external_id"}
         if relevant & set(card.model_dump(exclude_unset=True).keys()):
             price = fetch_card_price(
                 db_card.name, db_card.set_name, db_card.game, db_card.is_foil,
                 external_source=db_card.external_source,
                 external_id=db_card.external_id,
+                tcgplayer_product_id=db_card.tcgplayer_product_id,
             )
             db_card.current_price = price
         db.commit()
@@ -67,11 +70,13 @@ def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
     db_sealed = models.SealedProduct(**sealed.model_dump())
     # Pinned to a catalog entry? Try the catalog first for an authoritative price.
     sources: dict = {}
-    if db_sealed.external_source and db_sealed.external_id:
+    if (db_sealed.external_source and db_sealed.external_id) or db_sealed.tcgplayer_product_id:
         from providers import catalog as catalog_module
         catalog_price = catalog_module.fetch_tcgplayer_price(
-            db_sealed.external_source, db_sealed.external_id, is_foil=False,
+            db_sealed.external_source or "", db_sealed.external_id or "",
+            is_foil=False,
             set_name=db_sealed.set_name,
+            tcgplayer_product_id=db_sealed.tcgplayer_product_id,
         )
         if catalog_price is not None:
             sources["TCGPlayer"] = round(float(catalog_price), 2)
