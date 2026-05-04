@@ -520,16 +520,26 @@ def _ygoprodeck_card_payloads(query: str, limit: int) -> List[Dict]:
 
 
 def fetch_tcgplayer_price(
-    external_source: str, external_id: str, is_foil: bool = False
+    external_source: str,
+    external_id: str,
+    is_foil: bool = False,
+    set_name: Optional[str] = None,
 ) -> Optional[float]:
-    """Refresh the authoritative TCGplayer price for a previously linked card."""
+    """Refresh the authoritative TCGplayer price for a previously linked card.
+
+    ``set_name`` is used by the YGOPRODeck path to pick the matching printing.
+    YGOPRODeck's ``card_prices`` is averaged across every printing of a card,
+    so a Starlight Rare Dark Magician would otherwise resolve to the cheapest
+    reprint price (e.g. $0.22) instead of the printing-specific one (e.g. $9.67).
+    Scryfall and PokemonTCG.io key prices per card ID natively, so they ignore it.
+    """
     try:
         if external_source == "scryfall":
             return _scryfall_price(external_id, is_foil)
         if external_source == "pokemontcg":
             return _pokemontcg_price(external_id, is_foil)
         if external_source == "ygoprodeck":
-            return _ygoprodeck_price(external_id)
+            return _ygoprodeck_price(external_id, set_name=set_name)
         if external_source == "tcgplayer":
             # Hit TCGplayer's own product API — same data the public page uses.
             details = _tcgplayer_product_details(external_id)
@@ -618,7 +628,7 @@ def _search_ygoprodeck(query: str, limit: int) -> List[Dict]:
     return [_ygoprodeck_card_to_result(c) for c in ((resp.json().get("data") or [])[:limit])]
 
 
-def _ygoprodeck_price(card_id: str) -> Optional[float]:
+def _ygoprodeck_price(card_id: str, set_name: Optional[str] = None) -> Optional[float]:
     resp = request_with_backoff(
         "GET",
         "https://db.ygoprodeck.com/api/v7/cardinfo.php",
@@ -630,7 +640,22 @@ def _ygoprodeck_price(card_id: str) -> Optional[float]:
     items = (resp.json() or {}).get("data") or []
     if not items:
         return None
-    prices = (items[0].get("card_prices") or [{}])[0]
+    card = items[0]
+    sets = card.get("card_sets") or []
+    if set_name and sets:
+        # Per-printing price beats card-wide average. Pick the printing whose
+        # set_name shares tokens with the user's saved set, then read its set_price.
+        target_tokens = set_name.lower().replace("-", " ").split()
+        chosen = _pick_yugioh_printing(sets, target_tokens)
+        if chosen:
+            target_set = set(target_tokens)
+            chosen_tokens = set((chosen.get("set_name") or "").lower().replace("-", " ").split())
+            if target_set & chosen_tokens:
+                per_printing = _safe_float(chosen.get("set_price"))
+                if per_printing is not None:
+                    return per_printing
+    # Fallback: card-wide aggregate price.
+    prices = (card.get("card_prices") or [{}])[0]
     return _safe_float(prices.get("tcgplayer_price"))
 
 

@@ -70,7 +70,8 @@ def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
     if db_sealed.external_source and db_sealed.external_id:
         from providers import catalog as catalog_module
         catalog_price = catalog_module.fetch_tcgplayer_price(
-            db_sealed.external_source, db_sealed.external_id, is_foil=False
+            db_sealed.external_source, db_sealed.external_id, is_foil=False,
+            set_name=db_sealed.set_name,
         )
         if catalog_price is not None:
             sources["TCGPlayer"] = round(float(catalog_price), 2)

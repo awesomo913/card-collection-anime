@@ -494,6 +494,62 @@ def test_strip_rarity_suffix_tokens():
     assert strip([]) == []
 
 
+def test_ygoprodeck_price_picks_per_printing_when_set_name_given(monkeypatch):
+    """Refresh path bug: a Starlight Rare Dark Magician saved from a TCGplayer URL
+    was getting current_price=$0.22 instead of $9.67 because _ygoprodeck_price was
+    returning the card-wide aggregate (cheapest reprint) instead of the printing
+    matching the saved set_name. Threading set_name through fixes it.
+    """
+    ygo_card = {
+        "id": 46986414,
+        "name": "Dark Magician",
+        "card_sets": [
+            {"set_name": "Rarity Collection 5",
+             "set_rarity": "Starlight Rare", "set_price": "9.67"},
+            {"set_name": "Legend of Blue Eyes White Dragon",
+             "set_rarity": "Ultra Rare", "set_price": "150.00"},
+            {"set_name": "Starter Deck Yugi",
+             "set_rarity": "Common", "set_price": "0.22"},
+        ],
+        "card_prices": [{"tcgplayer_price": "0.22"}],  # aggregate = cheapest reprint
+    }
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: Resp(200, {"data": [ygo_card]}),
+    )
+
+    # Without set_name -> aggregate (the buggy behavior, kept as fallback)
+    aggregate = catalog_module.fetch_tcgplayer_price("ygoprodeck", "46986414")
+    assert aggregate == 0.22
+
+    # With set_name -> per-printing price for the matching printing
+    pinned = catalog_module.fetch_tcgplayer_price(
+        "ygoprodeck", "46986414", set_name="Rarity Collection 5"
+    )
+    assert pinned == 9.67
+
+    # Different saved printing -> different per-printing price
+    pinned_lob = catalog_module.fetch_tcgplayer_price(
+        "ygoprodeck", "46986414", set_name="Legend of Blue Eyes White Dragon"
+    )
+    assert pinned_lob == 150.00
+
+    # Set name with no token overlap -> falls back to aggregate, not random printing
+    no_match = catalog_module.fetch_tcgplayer_price(
+        "ygoprodeck", "46986414", set_name="Some Unrelated Set"
+    )
+    assert no_match == 0.22
+
+
 def test_profile_export_import_roundtrip(client):
     """Round-trip the entire collection through encrypted export/import."""
     # Seed two cards

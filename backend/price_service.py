@@ -73,7 +73,9 @@ def fetch_card_prices_all_sources(
     """
     out: Dict[str, float] = {}
     if external_source and external_id:
-        catalog_price = catalog.fetch_tcgplayer_price(external_source, external_id, is_foil)
+        catalog_price = catalog.fetch_tcgplayer_price(
+            external_source, external_id, is_foil, set_name=set_name
+        )
         if catalog_price is not None:
             out["TCGPlayer"] = round(float(catalog_price), 2)
 
@@ -164,7 +166,8 @@ def update_all_prices() -> None:
             prices: Dict[str, float] = {}
             if sealed.external_source and sealed.external_id:
                 catalog_price = catalog.fetch_tcgplayer_price(
-                    sealed.external_source, sealed.external_id, is_foil=False
+                    sealed.external_source, sealed.external_id, is_foil=False,
+                    set_name=sealed.set_name,
                 )
                 if catalog_price is not None:
                     prices["TCGPlayer"] = round(float(catalog_price), 2)
