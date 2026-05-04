@@ -406,6 +406,94 @@ def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
     assert body["tcgplayer_price"] == 87.35
 
 
+def test_yugioh_tcgplayer_url_strips_rarity_suffix(client, monkeypatch):
+    """A TCGplayer URL whose slug ends with a rarity descriptor (e.g.
+    ``...-dark-magician-starlight-rare``) must NOT degrade to a single-token
+    YGOPRODeck search of "rare" — that returns "Rare Fish" alphabetically.
+
+    Fix: prefer TCGplayer's own ``productName`` ("Dark Magician (Starlight Rare)")
+    with the parenthetical stripped as the primary search query. The slug
+    fallback also strips trailing rarity tokens defensively.
+    """
+    ygo_card = {
+        "id": 46986414,
+        "name": "Dark Magician",
+        "card_sets": [
+            {"set_name": "Rarity Collection 5",
+             "set_rarity": "Starlight Rare", "set_price": "0"},
+            {"set_name": "Legend of Blue Eyes White Dragon",
+             "set_rarity": "Ultra Rare", "set_price": "150.00"},
+        ],
+        "card_images": [{"image_url_small": "https://example.test/dm.jpg"}],
+        "card_prices": [{"tcgplayer_price": "1.50"}],
+        "type": "Normal Monster",
+    }
+
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    seq = iter([
+        Resp(200, {  # TCGplayer product details — productName carries truth
+            "marketPrice": 9.72,
+            "rarityName": "Starlight Rare",
+            "productName": "Dark Magician (Starlight Rare)",
+            "productLineName": "YuGiOh",
+            "setName": "Rarity Collection 5",
+        }),
+        Resp(404, {"object": "error"}),     # Scryfall miss (not magic)
+        Resp(200, {"data": []}),            # PokemonTCG no match
+        Resp(200, {"data": [ygo_card]}),    # YGOPRODeck on cleaned productName "dark magician"
+    ])
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: next(seq, Resp(404, {})),
+    )
+
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://www.tcgplayer.com/product/687196/"
+                       "yugioh-rarity-collection-5-dark-magician-starlight-rare"
+                       "?country=US&utm_campaign=foo"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    # Critical: NOT "Rare Fish" — must hit the actual card the URL points at.
+    assert body["external_source"] == "ygoprodeck"
+    assert body["name"] == "Dark Magician"
+    # Set-token preference still pins the printing the URL identifies.
+    assert body["set_name"] == "Rarity Collection 5"
+    assert body["rarity"] == "Starlight Rare"
+    assert body["tcgplayer_price"] == 9.72
+
+
+def test_clean_tcgplayer_product_name_strips_tags():
+    """Unit test: parenthetical tags + trailing collector numbers are dropped."""
+    from providers.catalog import _clean_tcgplayer_product_name as clean
+
+    assert clean("Dark Magician (Starlight Rare)") == "Dark Magician"
+    assert clean("Charizard - 4/102") == "Charizard"
+    assert clean("Black Lotus (Alpha Edition)") == "Black Lotus"
+    assert clean("Foo Bar (Promo) (Holo)") == "Foo Bar"
+    assert clean("") == ""
+    assert clean("   Naked Name   ") == "Naked Name"
+
+
+def test_strip_rarity_suffix_tokens():
+    """Unit test: trailing rarity descriptor tokens come off the slug name."""
+    from providers.catalog import _strip_rarity_suffix_tokens as strip
+
+    assert strip(["dark", "magician", "starlight", "rare"]) == ["dark", "magician"]
+    assert strip(["red", "eyes", "dark", "dragoon"]) == ["red", "eyes", "dark", "dragoon"]
+    assert strip(["pikachu", "promo", "holo"]) == ["pikachu"]
+    assert strip([]) == []
+
+
 def test_profile_export_import_roundtrip(client):
     """Round-trip the entire collection through encrypted export/import."""
     # Seed two cards

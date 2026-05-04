@@ -177,45 +177,68 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
                 out["tcgplayer_price"] = tcg_price
             return out
 
-    # 3. Yu-Gi-Oh slug -> search YGOPRODeck by extracted name. YGOPRODeck's
-    # fname is a strict substring match against the canonical card name, so a
-    # hyphenated card (Red-Eyes Dark Dragoon) won't match "red eyes dark dragoon".
-    # Walk shrinking trailing N-grams to find the tightest substring that hits,
-    # then pin the printing whose set_name overlaps with the slug's set tokens.
+    # 3. Yu-Gi-Oh / Pokemon. We prefer TCGplayer's own ``productName`` as the
+    # search query — it's the canonical card name for the printing the URL
+    # points at, and avoids slug-suffix rarity tokens ("starlight-rare",
+    # "ghost-rare", "secret-rare") leaking into the per-game catalog search.
+    # Slug parsing is kept as a fallback for when the API returns nothing.
     set_tokens_str, name = _split_slug(slug)
     # Keep digits — they're often the disambiguator between similarly-named
     # printings (e.g. "Rarity Collection 5" vs "25th Anniversary Rarity Collection II").
     set_tokens = set_tokens_str.split()
-    if name and ("yugioh" in slug or "yu-gi-oh" in slug):
-        tokens = name.split()
-        # YGOPRODeck returns the raw card payload — we need the per-printing
-        # detail in card_sets, so call the underlying API directly.
-        for n in (len(tokens), 3, 2, 1):
-            if n <= 0 or n > len(tokens):
+    api_name = _clean_tcgplayer_product_name((tcg_details or {}).get("productName") or "").lower()
+    product_line = ((tcg_details or {}).get("productLineName") or "").lower()
+    is_yugioh = product_line == "yugioh" or "yugioh" in slug or "yu-gi-oh" in slug
+    is_pokemon = product_line == "pokemon" or "pokemon" in slug
+
+    if is_yugioh and (api_name or name):
+        # Build ordered candidates: API name first, then slug-derived shrinking
+        # n-grams. Each candidate is tried until YGOPRODeck returns at least one
+        # card. The shrinking loop stops at n=2 because single-token searches
+        # ("rare", "fish") match arbitrary cards alphabetically — that's the
+        # exact bug this comment guards against.
+        slug_tokens = _strip_rarity_suffix_tokens((name or "").split())
+        candidates: List[str] = []
+        if api_name:
+            candidates.append(api_name)
+        if slug_tokens:
+            full = " ".join(slug_tokens)
+            if full and full not in candidates:
+                candidates.append(full)
+            for n in (3, 2):
+                if n < len(slug_tokens):
+                    cand = " ".join(slug_tokens[-n:])
+                    if cand not in candidates:
+                        candidates.append(cand)
+        seen: set = set()
+        for cand in candidates:
+            if not cand or cand in seen:
                 continue
-            cand = " ".join(tokens[-n:])
+            seen.add(cand)
             cards = _ygoprodeck_card_payloads(cand, limit=5)
             if not cards:
                 continue
-            target = set(tokens)
+            target = set(cand.split())
             cards.sort(
                 key=lambda c: -len(target & set((c.get("name") or "").lower().replace("-", " ").split()))
             )
             best = cards[0]
-            # Pick the printing closest to the URL's set tokens.
             out = _ygoprodeck_card_to_result(best, preferred_set_tokens=set_tokens)
             if tcg_price is not None:
                 out["tcgplayer_price"] = tcg_price
             if (tcg_details or {}).get("rarityName"):
                 out["rarity"] = tcg_details["rarityName"]
             return out
-    if name and "pokemon" in slug:
-        rows = _search_pokemontcg(name, limit=1)
-        if rows:
-            out = rows[0]
-            if tcg_price is not None:
-                out["tcgplayer_price"] = tcg_price
-            return out
+    if is_pokemon and (api_name or name):
+        for cand in (api_name, name):
+            if not cand:
+                continue
+            rows = _search_pokemontcg(cand, limit=1)
+            if rows:
+                out = rows[0]
+                if tcg_price is not None:
+                    out["tcgplayer_price"] = tcg_price
+                return out
 
     # 4. TCGplayer's own product API as a primary fallback — gives us name +
     # marketPrice + rarity even when none of the per-game catalogs know about
@@ -259,6 +282,54 @@ def _split_slug(slug: str) -> Tuple[str, str]:
 
 def _slug_to_card_name(slug: str) -> str:
     return _split_slug(slug)[1]
+
+
+# Trailing tokens that appear in TCGplayer slugs as rarity/treatment tags rather
+# than card-name words. Stripping them before searching avoids matches like
+# slug "...-dark-magician-starlight-rare" pulling "Rare Fish" via fname=rare.
+_RARITY_SUFFIX_TOKENS = frozenset({
+    "common", "rare", "super", "ultra", "secret", "ghost", "starlight",
+    "starfoil", "platinum", "gold", "prismatic", "collector", "collectors",
+    "quarter", "century", "anniversary", "premium", "alternate", "art",
+    "holo", "reverse", "foil", "promo", "shatterfoil", "extended",
+    "showcase", "borderless", "etched", "textured", "fullart", "full",
+})
+
+
+def _strip_rarity_suffix_tokens(tokens: List[str]) -> List[str]:
+    """Drop trailing rarity-treatment tokens from a slug-derived name list."""
+    out = list(tokens)
+    while out and out[-1] in _RARITY_SUFFIX_TOKENS:
+        out.pop()
+    return out
+
+
+_TCG_PARENS_TAIL_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_TCG_NUMBER_TAIL_RE = re.compile(r"\s*[-#]\s*\d+(?:/\d+)?\s*$")
+
+
+def _clean_tcgplayer_product_name(product_name: str) -> str:
+    """Strip trailing parenthetical / collector-number tags from a TCGplayer
+    productName so it matches the canonical card name in YGOPRODeck/Scryfall.
+
+    Examples::
+
+        "Dark Magician (Starlight Rare)"   -> "Dark Magician"
+        "Charizard - 4/102"                -> "Charizard"
+        "Black Lotus (Alpha Edition)"      -> "Black Lotus"
+    """
+    if not product_name:
+        return ""
+    name = product_name.strip()
+    # Strip nested parenthetical groups one at a time (handles names with
+    # multiple tags like "Foo (Promo) (Holo)").
+    while True:
+        new_name = _TCG_PARENS_TAIL_RE.sub("", name).rstrip()
+        if new_name == name:
+            break
+        name = new_name
+    name = _TCG_NUMBER_TAIL_RE.sub("", name).strip()
+    return name
 
 
 _META_TAG_RE = re.compile(r"<meta\b([^>]*)>", re.IGNORECASE)
