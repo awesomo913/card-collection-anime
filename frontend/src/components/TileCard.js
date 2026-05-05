@@ -12,7 +12,10 @@ const SOURCE_COLORS = {
 const TileCard = ({ item, onDelete }) => {
   const isSealed = !!item.product_type;
   const itemType = isSealed ? 'sealed' : 'card';
-  const editPath = isSealed ? `/sealed/edit/${item.id}` : `/cards/edit/${item.id}`;
+  // Phase D: separate read-only detail path from edit path. Tile click opens
+  // detail; the Edit link inside still goes to the form.
+  const detailPath = isSealed ? `/sealed/${item.id}` : `/cards/${item.id}`;
+  const editPath = `${detailPath}/edit`;
   const game = (item.game || '').toLowerCase();
   const price = item.current_price;
   const priceSources = item.price_sources || {};
@@ -43,20 +46,27 @@ const TileCard = ({ item, onDelete }) => {
 
   return (
     <article className="anime-tile" data-game={game} aria-label={item.name}>
-      <header className="tile-header">
-        <div className="tile-title">{item.name}</div>
-        <div className="tile-subtitle">
-          {item.set_name || '—'} • {item.game || '?'}
-          {item.is_foil ? ' • FOIL' : ''}
-          {isSealed ? ` • ${item.product_type}` : ''}
-        </div>
-      </header>
+      {/* Tile click opens read-only detail page. Wraps the title+image+price
+          areas; Edit/Delete in the footer stay outside this Link so clicking
+          them doesn't bubble to detail navigation. */}
+      <Link to={detailPath} className="tile-link">
+        <header className="tile-header">
+          <div className="tile-title">{item.name}</div>
+          <div className="tile-subtitle">
+            {item.set_name || '—'} • {item.game || '?'}
+            {item.is_foil ? ' • FOIL' : ''}
+            {isSealed ? ` • ${item.product_type}` : ''}
+          </div>
+        </header>
 
-      {item.image_url && (
-        <div className="tile-image">
-          <img src={item.image_url} alt={item.name} loading="lazy" />
-        </div>
-      )}
+        {item.image_url && (
+          <div className="tile-image">
+            <img src={item.image_url} alt={item.name} loading="lazy" />
+          </div>
+        )}
+      </Link>
+      {/* Closing Link tag note: rest of the tile (price, sources, sparkline,
+          actions) sits OUTSIDE so they retain their own click semantics. */}
 
       <div className="tile-price">
         <span className="label">Current</span>

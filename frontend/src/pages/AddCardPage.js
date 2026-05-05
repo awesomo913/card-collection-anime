@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import CatalogSearch from '../components/CatalogSearch';
@@ -9,7 +9,9 @@ const EMPTY_CARD = {
   set_name: '',
   card_number: '',
   rarity: '',
-  condition: '',
+  // Default to "Near Mint" — saves a keystroke on ~90% of cards (most cards
+  // sold/owned today are Near Mint or higher; user can override if not).
+  condition: 'Near Mint',
   quantity: 1,
   purchase_price: '',
   is_foil: false,
@@ -29,6 +31,10 @@ const AddCardPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+  // Toast for "Save & Add Another" mode so the user knows the card landed
+  // even though the form just clears instead of redirecting.
+  const [savedToast, setSavedToast] = useState(null);
+  const formTopRef = useRef(null);
 
   useEffect(() => {
     if (!id) return;
@@ -74,7 +80,14 @@ const AddCardPage = () => {
     }));
   };
 
-  const handleSubmit = async (e) => {
+  /**
+   * @param {boolean} addAnother  If true, after a successful create, clear the
+   *                              form back to EMPTY_CARD and stay on the page
+   *                              instead of redirecting to /cards. Designed for
+   *                              batch entry: paste URL → save & add another →
+   *                              paste next URL, never leaving this page.
+   */
+  const handleSubmit = async (e, addAnother = false) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
@@ -87,10 +100,23 @@ const AddCardPage = () => {
           ? null
           : parseFloat(card.purchase_price),
       };
-      if (id) await api.updateCard(id, payload);
-      else await api.createCard(payload);
-      setSaved(true);
-      setTimeout(() => navigate('/cards'), 800);
+      if (id) {
+        await api.updateCard(id, payload);
+      } else {
+        await api.createCard(payload);
+      }
+      if (id || !addAnother) {
+        // Edit mode OR final save — redirect.
+        setSaved(true);
+        setTimeout(() => navigate('/cards'), 800);
+      } else {
+        // Add-another mode: keep editing. Toast + clear form + scroll to top.
+        const justSaved = card.name || 'card';
+        setSavedToast(`Saved "${justSaved}". Paste the next URL.`);
+        setTimeout(() => setSavedToast(null), 3500);
+        setCard({ ...EMPTY_CARD, game: card.game });  // keep game for batch consistency
+        if (formTopRef.current) formTopRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
     } catch (err) {
       console.error(err);
       setError(err?.response?.data?.detail || 'Failed to save card');
@@ -99,13 +125,40 @@ const AddCardPage = () => {
     }
   };
 
+  /**
+   * Try to read a TCG URL out of the clipboard. Gated behind a button click
+   * to avoid the perpetual permission prompt that auto-detection would trigger.
+   * Falls back gracefully when the Clipboard API is unavailable (older browsers,
+   * insecure contexts) — the user can still paste manually into the search box.
+   */
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.readText) {
+        setError('Clipboard access unavailable in this browser. Paste manually instead.');
+        return;
+      }
+      const text = (await navigator.clipboard.readText()).trim();
+      if (!/^https?:\/\//i.test(text)) {
+        setError('Clipboard does not contain a URL.');
+        return;
+      }
+      // Stuff it into CatalogSearch via a custom event the component listens for.
+      window.dispatchEvent(new CustomEvent('catalog-search-prefill', { detail: text }));
+      setError(null);
+    } catch (err) {
+      console.error('Clipboard read failed:', err);
+      setError('Could not read clipboard. Paste the URL manually.');
+    }
+  };
+
   if (loading && !saved) return <div className="loading">Working…</div>;
   if (saved) return <div className="loading">Saved! Redirecting…</div>;
 
   return (
-    <section>
+    <section ref={formTopRef}>
       <h2>{id ? 'Edit Card' : 'Add a Card'}</h2>
       {error && <div className="error">{error}</div>}
+      {savedToast && <div className="success-toast" role="status">{savedToast}</div>}
 
       {!id && (
         <div className="catalog-search-host">
@@ -118,13 +171,16 @@ const AddCardPage = () => {
                 <option value="yugioh">Yu-Gi-Oh!</option>
               </select>
             </label>
+            <button type="button" className="ghost paste-btn" onClick={handlePasteFromClipboard}>
+              📋 Paste URL
+            </button>
             {card.external_source && card.external_id && (
               <span className="linked-badge" title={`${card.external_source}:${card.external_id}`}>
                 ✓ Linked to {card.external_source}
               </span>
             )}
           </div>
-          <CatalogSearch game={card.game} onPick={handlePick} />
+          <CatalogSearch game={card.game} onPick={handlePick} autoFocus />
           <p className="catalog-hint">
             Search picks the exact product so future price refreshes stay accurate.
             You can also fill the form manually below.
@@ -214,7 +270,19 @@ const AddCardPage = () => {
           <textarea name="notes" value={card.notes || ''} onChange={handleChange} />
         </div>
 
-        <button type="submit" disabled={loading}>{loading ? 'Saving…' : 'Save Card'}</button>
+        <button type="submit" disabled={loading}>
+          {loading ? 'Saving…' : id ? 'Save Card' : 'Save & Done'}
+        </button>
+        {!id && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={(e) => handleSubmit(e, true)}
+            title="Save and stay on this page to add another card"
+          >
+            {loading ? 'Saving…' : 'Save & Add Another'}
+          </button>
+        )}
         <button type="button" onClick={() => navigate('/cards')}>Cancel</button>
       </form>
     </section>

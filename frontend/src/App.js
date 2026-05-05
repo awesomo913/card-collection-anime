@@ -1,7 +1,8 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import CardListPage from './pages/CardListPage';
 import AddCardPage from './pages/AddCardPage';
+import CardDetailPage from './pages/CardDetailPage';
 import SealedListPage from './pages/SealedListPage';
 import AddSealedPage from './pages/AddSealedPage';
 import DashboardPage from './pages/DashboardPage';
@@ -9,6 +10,16 @@ import PriceSnapshotPage from './pages/PriceSnapshotPage';
 import SettingsPage from './pages/SettingsPage';
 import StatusPage from './pages/StatusPage';
 import './App.css';
+
+/**
+ * Redirect helper for the legacy /cards/edit/:id and /sealed/edit/:id routes.
+ * Phase D moved edit links under the new RESTful shape (/cards/:id/edit) but
+ * existing bookmarks should keep working forever.
+ */
+const RedirectEdit = ({ basePath }) => {
+  const id = window.location.pathname.split('/').pop();
+  return <Navigate replace to={`${basePath}/${id}/edit`} />;
+};
 
 function App() {
   return (
@@ -33,10 +44,15 @@ function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/cards" element={<CardListPage />} />
             <Route path="/cards/add" element={<AddCardPage />} />
-            <Route path="/cards/edit/:id" element={<AddCardPage />} />
+            {/* New REST shape — preferred. Read-only detail + edit form. */}
+            <Route path="/cards/:id" element={<CardDetailPage />} />
+            <Route path="/cards/:id/edit" element={<AddCardPage />} />
+            {/* Legacy alias kept for any old bookmarks. */}
+            <Route path="/cards/edit/:id" element={<RedirectEdit basePath="/cards" />} />
             <Route path="/sealed" element={<SealedListPage />} />
             <Route path="/sealed/add" element={<AddSealedPage />} />
-            <Route path="/sealed/edit/:id" element={<AddSealedPage />} />
+            <Route path="/sealed/:id/edit" element={<AddSealedPage />} />
+            <Route path="/sealed/edit/:id" element={<RedirectEdit basePath="/sealed" />} />
             <Route path="/snapshot" element={<PriceSnapshotPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/status" element={<StatusPage />} />

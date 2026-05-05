@@ -846,3 +846,307 @@ form button { margin-right: 10px; }
 .log-warning .log-level { color: var(--neon-gold); }
 .log-error   .log-level { color: var(--neon-red); }
 .log-debug   .log-level { color: var(--text-mute); }
+
+/* ============================================================================
+ * Phase D — UX overhaul: filter panel, game chips, detail page, mobile, a11y.
+ * Appended below to keep the original theme intact and changes auditable.
+ * ============================================================================ */
+
+/* -- Save & Add Another flow ------------------------------------------------ */
+.success-toast {
+  background: linear-gradient(120deg, rgba(0,255,200,0.18), rgba(0,255,200,0.08));
+  border: 1px solid var(--neon-cyan);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.paste-btn {
+  font-size: 0.85rem;
+}
+
+/* -- Tile click target ------------------------------------------------------ */
+.tile-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: filter 0.15s ease;
+}
+.tile-link:hover { filter: brightness(1.15); }
+.tile-link:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+/* -- Filter panel (CardListPage) ------------------------------------------- */
+.card-list-page .filter-panel {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.filter-search {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.filter-sort {
+  flex: 0 0 auto;
+}
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-mute);
+}
+.filter-field input {
+  width: 110px;
+}
+.filter-summary {
+  font-size: 0.85rem;
+  color: var(--text-mute);
+}
+
+/* -- Game chips ------------------------------------------------------------ */
+.chips-row { gap: 8px; }
+.game-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.game-chip:hover { color: var(--text); }
+.game-chip.active[data-game="magic"] {
+  background: rgba(150,80,255,0.18);
+  border-color: var(--neon-violet, #b385ff);
+  color: var(--neon-violet, #b385ff);
+}
+.game-chip.active[data-game="pokemon"] {
+  background: rgba(255,200,40,0.18);
+  border-color: var(--neon-gold, #ffc828);
+  color: var(--neon-gold, #ffc828);
+}
+.game-chip.active[data-game="yugioh"] {
+  background: rgba(255,60,80,0.18);
+  border-color: var(--neon-red, #ff3c50);
+  color: var(--neon-red, #ff3c50);
+}
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.clear-filters {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+.link-button {
+  background: none;
+  border: none;
+  color: var(--neon-cyan);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font: inherit;
+}
+
+/* -- Card detail page ------------------------------------------------------ */
+.card-detail-page {
+  max-width: 980px;
+}
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.back-link {
+  color: var(--neon-cyan);
+  text-decoration: none;
+}
+.detail-actions {
+  display: flex;
+  gap: 8px;
+}
+.detail-actions a.primary {
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet, #b385ff));
+  color: #0a0a14;
+  padding: 8px 14px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+}
+.detail-card {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 24px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+}
+.detail-image img {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+.detail-image .no-image {
+  aspect-ratio: 5/7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.5);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-mute);
+}
+.detail-meta h2 {
+  margin: 0 0 12px;
+}
+.meta-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 0.92rem;
+}
+.meta-row.big {
+  font-size: 1.2rem;
+  padding: 10px 0;
+}
+.meta-row.big .value {
+  font-weight: 700;
+  color: var(--neon-cyan);
+}
+.meta-row .label {
+  flex: 0 0 110px;
+  color: var(--text-mute);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  padding-top: 2px;
+}
+.meta-row.notes { flex-direction: column; gap: 4px; }
+.detail-sparkline,
+.detail-sources,
+.detail-history {
+  margin-top: 24px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.detail-history table,
+.detail-sources table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.detail-history th,
+.detail-history td,
+.detail-sources th,
+.detail-sources td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.detail-history th,
+.detail-sources th {
+  color: var(--text-mute);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+.muted { color: var(--text-mute); font-size: 0.85rem; }
+
+/* -- Accessibility: focus rings on form controls --------------------------- */
+.card-list-page input:focus-visible,
+.card-list-page select:focus-visible,
+.filter-field input:focus-visible,
+.catalog-search input:focus-visible,
+.game-chip:focus-visible,
+.toggle input:focus-visible,
+.clear-filters:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+/* -- Catalog search results: highlight active option ----------------------- */
+.catalog-results li.is-active {
+  background: rgba(0, 200, 255, 0.12);
+  border-color: var(--neon-cyan);
+}
+
+/* -- Mobile breakpoints ---------------------------------------------------- */
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important;
+  }
+  .filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .filter-row.chips-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .filter-search,
+  .filter-sort,
+  .add-button {
+    width: 100%;
+  }
+  .detail-card {
+    grid-template-columns: 1fr;
+  }
+  .detail-image img {
+    max-width: 280px;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 480px) {
+  /* WCAG 2.1 AA — 44×44 minimum touch targets. */
+  button,
+  .add-button,
+  .game-chip,
+  nav a,
+  .tile-link,
+  .detail-actions a.primary {
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .filter-field input {
+    width: 100%;
+    min-height: 44px;
+  }
+  /* Drop the fancy gradient text on the tile price for legibility on small
+     screens — solid color reads better in sunlight. */
+  .tile-price .value {
+    background: none !important;
+    -webkit-text-fill-color: var(--neon-cyan) !important;
+    color: var(--neon-cyan) !important;
+    text-shadow: 0 0 6px rgba(0,0,0,0.9);
+  }
+}
