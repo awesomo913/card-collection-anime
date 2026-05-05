@@ -74,9 +74,41 @@ const StatusPage = () => {
     : null;
   const updateOk = !data.last_price_update_error;
 
+  // Phase E: scheduler-health banner. ``scheduler_health`` comes from the
+  // backend (status.py overview) and is "stale" when last refresh exceeds
+  // 1.5× the configured interval — surfaces silent daemon death prominently.
+  const schedHealth = data.scheduler_health || 'unknown';
+  const schemaWarnings = Array.isArray(data.schema_warnings) ? data.schema_warnings : [];
+
   return (
     <section>
       <h2>Server Status</h2>
+
+      {schedHealth === 'stale' && (
+        <div className="status-banner stale" role="alert">
+          ⚠️ Price refresh is stale. Last successful update was{' '}
+          {lastUpdate ? formatUptime(lastUpdateAge) : 'never'} ago. Expected
+          interval: {data.scheduler_interval_seconds
+            ? `${Math.round(data.scheduler_interval_seconds / 3600)}h`
+            : 'unknown'}.
+          Check logs below for errors.
+        </div>
+      )}
+      {schedHealth === 'warning' && (
+        <div className="status-banner warning" role="status">
+          Price refresh is running late. Last update {formatUptime(lastUpdateAge)} ago;
+          expected every {Math.round((data.scheduler_interval_seconds || 0) / 3600)}h.
+        </div>
+      )}
+      {schemaWarnings.length > 0 && (
+        <div className="status-banner stale" role="alert">
+          Schema self-heal could not complete:
+          <ul>
+            {schemaWarnings.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+          Run a manual Alembic migration to resolve.
+        </div>
+      )}
 
       <div className="status-strip">
         <span className={`status-dot ${updateOk ? 'ok' : 'bad'}`} />

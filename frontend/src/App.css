@@ -1150,3 +1150,26 @@ form button { margin-right: 10px; }
     text-shadow: 0 0 6px rgba(0,0,0,0.9);
   }
 }
+
+/* Phase E: scheduler-health banner on /status page. */
+.status-banner {
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-weight: 500;
+}
+.status-banner.stale {
+  background: rgba(255,60,80,0.15);
+  border: 1px solid var(--neon-red, #ff3c50);
+  color: var(--neon-red, #ff3c50);
+}
+.status-banner.warning {
+  background: rgba(255,200,40,0.12);
+  border: 1px solid var(--neon-gold, #ffc828);
+  color: var(--neon-gold, #ffc828);
+}
+.status-banner ul {
+  margin: 6px 0 0 18px;
+  font-weight: 400;
+  font-size: 0.88rem;
+}

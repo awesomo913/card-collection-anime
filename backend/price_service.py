@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -10,6 +12,12 @@ from providers import PriceQuery, catalog, get_enabled_providers
 import models
 
 logger = logging.getLogger(__name__)
+
+# Phase E: how many cards' external API calls run in parallel during the
+# scheduler's batch refresh. 4 is a polite default — fits inside typical
+# rate limits even for 100+ card collections at 4×/day cadence. Override
+# via env for stress testing or larger collections.
+_MAX_REFRESH_WORKERS = int(os.environ.get("PRICE_REFRESH_WORKERS", "4"))
 
 # Deterministic mock prices used in dev/test when no provider credentials are present.
 # Real prices are noisy; mocks are stable so tests/snapshots are reproducible.
@@ -195,8 +203,13 @@ def update_all_prices() -> None:
 
     now = datetime.utcnow()
 
-    # ---- Phase 2: refresh each card with no DB session held --------------
-    for snap in card_snaps:
+    # ---- Phase 2: parallel external fetch (no DB session held) -----------
+    # ThreadPoolExecutor fans out the per-card provider calls. External APIs
+    # are I/O-bound, so threads (not processes) are the right tool — Python's
+    # GIL is irrelevant when threads are blocked on socket reads. Drops the
+    # ~5-8min serial refresh on 100 cards to ~1-2min, which is the prerequisite
+    # for sub-day cadence (4×/day).
+    def _fetch_one_card(snap: Dict) -> Optional[tuple]:
         try:
             prices = fetch_card_prices_all_sources(
                 snap["name"], snap["set_name"], snap["game"], snap["is_foil"],
@@ -204,18 +217,37 @@ def update_all_prices() -> None:
                 external_id=snap["external_id"],
                 tcgplayer_product_id=snap["tcgplayer_product_id"],
             )
+            return (snap["id"], prices)
         except Exception as exc:  # noqa: BLE001 — one bad card shouldn't kill the batch
             logger.exception("Price fetch failed for card %s: %s", snap["id"], exc)
-            continue
-        _persist_card_prices(snap["id"], prices, now, log_price_history)
+            return None
 
-    for snap in sealed_snaps:
+    def _fetch_one_sealed(snap: Dict) -> Optional[tuple]:
         try:
-            prices = _resolve_sealed_prices(snap)
+            return (snap["id"], _resolve_sealed_prices(snap))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Price fetch failed for sealed %s: %s", snap["id"], exc)
-            continue
-        _persist_sealed_prices(snap["id"], prices, now, log_price_history)
+            return None
+
+    # ---- Phase 3: persist results sequentially (one short tx per row) ----
+    # Concurrency is in the EXTERNAL fetch only. DB writes stay sequential
+    # because SQLite is single-writer; parallelizing them would just thrash
+    # on the write lock.
+    if card_snaps:
+        with ThreadPoolExecutor(max_workers=_MAX_REFRESH_WORKERS) as pool:
+            for result in pool.map(_fetch_one_card, card_snaps):
+                if result is None:
+                    continue
+                card_id, prices = result
+                _persist_card_prices(card_id, prices, now, log_price_history)
+
+    if sealed_snaps:
+        with ThreadPoolExecutor(max_workers=_MAX_REFRESH_WORKERS) as pool:
+            for result in pool.map(_fetch_one_sealed, sealed_snaps):
+                if result is None:
+                    continue
+                sealed_id, prices = result
+                _persist_sealed_prices(sealed_id, prices, now, log_price_history)
 
 
 def _resolve_sealed_prices(snap: Dict) -> Dict[str, float]:

@@ -80,6 +80,11 @@ if command -v fuser >/dev/null 2>&1; then
   fuser -k "${PORT}/tcp" 2>/dev/null || true
 fi
 
+# --- Phase E: 4×/day price refresh by default ---
+# Override by exporting PRICE_UPDATE_INTERVAL_HOURS before running this script.
+export PRICE_UPDATE_INTERVAL_HOURS="${PRICE_UPDATE_INTERVAL_HOURS:-6}"
+log "price refresh interval: ${PRICE_UPDATE_INTERVAL_HOURS}h"
+
 # --- Launch uvicorn in foreground; Ctrl+C to stop ---
 log "starting uvicorn on http://${HOST}:${PORT}"
 LAN_IP="$(hostname --all-ip-addresses | awk '{print $1}')"
