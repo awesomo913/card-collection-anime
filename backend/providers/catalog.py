@@ -120,8 +120,18 @@ def _tcgplayer_product_details(product_id: str) -> Optional[Dict]:
 
 
 def _result_from_tcgplayer_details(product_id: str, details: Dict) -> Dict:
-    """Build a minimal CatalogResult from TCGplayer's own product API."""
-    name = details.get("productUrlName") or details.get("productName") or ""
+    """Build a minimal CatalogResult from TCGplayer's own product API.
+
+    Phase C note: TCGplayer's ``productName`` carries trailing parentheticals
+    like "Dark Magician (Starlight Rare)" — we strip those for the saved
+    card name so the My Cards tile reads cleanly. The rarity tag goes on the
+    ``rarity`` field instead. ``productUrlName`` (when present) is the URL
+    slug version, sometimes cleaner; we prefer it when available.
+    """
+    raw_name = details.get("productName") or ""
+    url_name = details.get("productUrlName") or ""
+    # Clean strips parenthetical rarity tags + trailing collector numbers.
+    name = _clean_tcgplayer_product_name(raw_name) or url_name
     if name:
         name = name.replace(" - ", " — ").strip()
     image_url = (
@@ -141,19 +151,27 @@ def _result_from_tcgplayer_details(product_id: str, details: Dict) -> Dict:
 
 
 def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
+    """Resolve a TCGplayer URL to a CatalogResult.
+
+    Phase C hybrid strategy: TCGplayer's own product details API is the
+    authoritative source — it has the per-printing marketPrice, the cleaned
+    productName, the setName, and the rarityName. We use it for everything
+    EXCEPT Magic, where Scryfall has genuinely richer card data (oracle text,
+    mana cost, frame variants) and matches TCGplayer prices closely.
+
+    The per-game-catalog YGOPRODeck/PokemonTCG.io fallbacks for URL-pasted
+    cards used to live here; they were the source of the "Rare Fish" and
+    "$0.22 instead of $9.72" bugs. Removed in this commit; typed search at
+    /catalog/search still uses those APIs (different flow).
+    """
     m = re.match(r"^/product/(\d+)(?:/([^/?#]+))?", path)
     if not m:
         return None
     product_id = m.group(1)
     slug = (m.group(2) or "").lower()
 
-    # Always pre-fetch TCGplayer's own product details. We use these as the
-    # authoritative price source (the per-game catalogs return aggregate
-    # prices that don't reflect the specific printing the URL points at).
-    tcg_details = _tcgplayer_product_details(product_id)
-    tcg_price = _safe_float((tcg_details or {}).get("marketPrice"))
-
-    # 1. Magic: Scryfall has /cards/tcgplayer/<id>.
+    # 1. Magic via Scryfall: better metadata than TCGplayer's product API,
+    #    and Scryfall's per-card-ID prices are accurate per-printing.
     resp = request_with_backoff(
         "GET",
         f"https://api.scryfall.com/cards/tcgplayer/{product_id}",
@@ -161,100 +179,17 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     )
     if resp and resp.status_code == 200:
         out = _scryfall_card_to_result(resp.json())
-        if tcg_price is not None:
-            out["tcgplayer_price"] = tcg_price
         out["tcgplayer_product_id"] = product_id
         return out
 
-    # 2. Pokemon: PokemonTCG.io supports filtering by tcgplayer.url match.
-    canonical = full_url.split("?", 1)[0]
-    resp = request_with_backoff(
-        "GET",
-        "https://api.pokemontcg.io/v2/cards",
-        params={"q": f'tcgplayer.url:"{canonical}"', "pageSize": 1},
-        headers={"Accept": "application/json"},
-    )
-    if resp and resp.status_code == 200:
-        items = (resp.json() or {}).get("data") or []
-        if items:
-            out = _pokemontcg_card_to_result(items[0])
-            if tcg_price is not None:
-                out["tcgplayer_price"] = tcg_price
-            out["tcgplayer_product_id"] = product_id
-            return out
-
-    # 3. Yu-Gi-Oh / Pokemon. We prefer TCGplayer's own ``productName`` as the
-    # search query — it's the canonical card name for the printing the URL
-    # points at, and avoids slug-suffix rarity tokens ("starlight-rare",
-    # "ghost-rare", "secret-rare") leaking into the per-game catalog search.
-    # Slug parsing is kept as a fallback for when the API returns nothing.
-    set_tokens_str, name = _split_slug(slug)
-    # Keep digits — they're often the disambiguator between similarly-named
-    # printings (e.g. "Rarity Collection 5" vs "25th Anniversary Rarity Collection II").
-    set_tokens = set_tokens_str.split()
-    api_name = _clean_tcgplayer_product_name((tcg_details or {}).get("productName") or "").lower()
-    product_line = ((tcg_details or {}).get("productLineName") or "").lower()
-    is_yugioh = product_line == "yugioh" or "yugioh" in slug or "yu-gi-oh" in slug
-    is_pokemon = product_line == "pokemon" or "pokemon" in slug
-
-    if is_yugioh and (api_name or name):
-        # Build ordered candidates: API name first, then slug-derived shrinking
-        # n-grams. Each candidate is tried until YGOPRODeck returns at least one
-        # card. The shrinking loop stops at n=2 because single-token searches
-        # ("rare", "fish") match arbitrary cards alphabetically — that's the
-        # exact bug this comment guards against.
-        slug_tokens = _strip_rarity_suffix_tokens((name or "").split())
-        candidates: List[str] = []
-        if api_name:
-            candidates.append(api_name)
-        if slug_tokens:
-            full = " ".join(slug_tokens)
-            if full and full not in candidates:
-                candidates.append(full)
-            for n in (3, 2):
-                if n < len(slug_tokens):
-                    cand = " ".join(slug_tokens[-n:])
-                    if cand not in candidates:
-                        candidates.append(cand)
-        seen: set = set()
-        for cand in candidates:
-            if not cand or cand in seen:
-                continue
-            seen.add(cand)
-            cards = _ygoprodeck_card_payloads(cand, limit=5)
-            if not cards:
-                continue
-            target = set(cand.split())
-            cards.sort(
-                key=lambda c: -len(target & set((c.get("name") or "").lower().replace("-", " ").split()))
-            )
-            best = cards[0]
-            out = _ygoprodeck_card_to_result(best, preferred_set_tokens=set_tokens)
-            if tcg_price is not None:
-                out["tcgplayer_price"] = tcg_price
-            if (tcg_details or {}).get("rarityName"):
-                out["rarity"] = tcg_details["rarityName"]
-            out["tcgplayer_product_id"] = product_id
-            return out
-    if is_pokemon and (api_name or name):
-        for cand in (api_name, name):
-            if not cand:
-                continue
-            rows = _search_pokemontcg(cand, limit=1)
-            if rows:
-                out = rows[0]
-                if tcg_price is not None:
-                    out["tcgplayer_price"] = tcg_price
-                out["tcgplayer_product_id"] = product_id
-                return out
-
-    # 4. TCGplayer's own product API as a primary fallback — gives us name +
-    # marketPrice + rarity even when none of the per-game catalogs know about
-    # this product (sealed boxes, presale items, etc.).
+    # 2. Everything else: TCGplayer details API. One round-trip, authoritative
+    #    per-printing marketPrice, cleaned name, rarity, set. No fuzzy-match.
+    tcg_details = _tcgplayer_product_details(product_id)
     if tcg_details:
         return _result_from_tcgplayer_details(product_id, tcg_details)
 
-    # 5. Last resort — scrape the TCGplayer page itself for OG metadata.
+    # 3. Last resort — scrape the TCGplayer page itself for OG metadata.
+    #    Used when the details API is rate-limited or for unusual product types.
     return _scrape_tcgplayer_og(full_url, product_id)
 
 
@@ -537,39 +472,42 @@ def fetch_tcgplayer_price(
 ) -> Optional[float]:
     """Refresh the authoritative TCGplayer price for a previously linked card.
 
-    Priority order:
-    1. ``tcgplayer_product_id`` (when present): hit TCGplayer's product details
-       API for ``marketPrice``. This is the per-printing source of truth — used
-       for any card imported via TCGplayer URL paste, regardless of which catalog
-       the metadata came from. Critical for YGO printings whose YGOPRODeck
-       per-printing ``set_price`` is zero (Starlight Rare, Ghost Rare, etc).
-    2. Per-source path keyed by ``external_id``. Scryfall/PokemonTCG.io return
-       per-card-ID prices natively. YGOPRODeck only carries card-wide aggregates
-       so ``set_name`` is used to pick the matching printing as a best-effort.
+    Phase C hybrid strategy:
+    1. TCGplayer (product details API) — used when we have a tcgplayer_product_id
+       OR external_source == "tcgplayer". Per-printing marketPrice. The
+       authoritative source for any card imported via TCGplayer URL paste.
+    2. Scryfall — for Magic cards. Per-card-ID accurate prices, plus richer
+       metadata at search time.
+
+    The legacy YGOPRODeck/PokemonTCG refresh branches are gone — those were
+    the root cause of YGO Starlight-Rare-returns-$0.22-not-$9.72. Existing
+    rows with external_source="ygoprodeck" or "pokemontcg" will still get
+    their TCGplayer price via the tcgplayer_product_id path (Phase B saved
+    that ID on save). The Phase C migration backfills external_source="tcgplayer"
+    for those rows so future code paths can drop the legacy column entirely.
     """
     try:
-        # 1. TCGplayer-pinned: most accurate, available whenever the user
-        #    imported via URL paste.
-        if tcgplayer_product_id:
-            details = _tcgplayer_product_details(tcgplayer_product_id)
+        # 1. TCGplayer-pinned (preferred). Covers both the new "tcgplayer"
+        #    source and any older row that still has an external_source of
+        #    "ygoprodeck"/"pokemontcg" but a saved tcgplayer_product_id.
+        if tcgplayer_product_id or external_source == "tcgplayer":
+            pid = tcgplayer_product_id or external_id
+            details = _tcgplayer_product_details(pid)
             if details:
                 market = _safe_float(details.get("marketPrice"))
                 if market is not None:
                     return market
-            # Fall through to per-source path if TCGplayer details are unavailable.
+            # If the details API is unavailable, fall through — for Magic
+            # we have a Scryfall fallback below; for others we return None.
 
+        # 2. Scryfall path for Magic cards (per-card-ID, accurate).
         if external_source == "scryfall":
             return _scryfall_price(external_id, is_foil)
-        if external_source == "pokemontcg":
-            return _pokemontcg_price(external_id, is_foil)
-        if external_source == "ygoprodeck":
-            return _ygoprodeck_price(external_id, set_name=set_name)
-        if external_source == "tcgplayer":
-            # external_id IS the TCGplayer product_id in this branch.
-            details = _tcgplayer_product_details(external_id)
-            if details:
-                return _safe_float(details.get("marketPrice"))
-            return None
+
+        # No usable source — return None. set_name kept in the signature
+        # for backward compatibility with callers; unused on this path.
+        _ = set_name
+        return None
     except (requests.RequestException, ValueError, KeyError, json.JSONDecodeError) as exc:
         # Narrowed from bare ``except Exception`` so genuinely unexpected
         # failures (programmer errors, signal handling, etc) propagate to

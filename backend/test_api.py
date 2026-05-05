@@ -348,25 +348,12 @@ def test_status_logs_endpoint(client):
         assert {"ts", "level", "name", "msg"} <= set(sample)
 
 
-def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
-    """YGO URL with a specific set in the slug must pick that printing's set_name,
-    not the first one in YGOPRODeck's card_sets list."""
-    ygo_card = {
-        "id": 37818794,
-        "name": "Red-Eyes Dark Dragoon",
-        "card_sets": [
-            {"set_name": "2020 Tin of Lost Memories Mega Pack",
-             "set_rarity": "Ultra Rare", "set_price": "115.97"},
-            {"set_name": "25th Anniversary Rarity Collection II",
-             "set_rarity": "Collector's Rare", "set_price": "0"},
-            {"set_name": "Rarity Collection 5",
-             "set_rarity": "Starlight Rare", "set_price": "0"},
-        ],
-        "card_images": [{"image_url_small": "https://example.test/dragoon.jpg"}],
-        "card_prices": [{"tcgplayer_price": "1.19"}],
-        "type": "Fusion Monster",
-    }
-
+def test_yugioh_tcgplayer_url_uses_tcgplayer_details_directly(client, monkeypatch):
+    """Phase C hybrid: a YGO TCGplayer URL resolves via TCGplayer's product
+    details API, not via YGOPRODeck. Per-printing marketPrice + rarity come
+    straight from TCGplayer. No more "Rare Fish" or "$0.22" bugs from
+    YGOPRODeck aggregate / zero-data per-printing entries.
+    """
     class Resp:
         def __init__(self, status, payload):
             self.status_code = status
@@ -374,14 +361,18 @@ def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
         def json(self):
             return self._payload
 
+    # Order: Scryfall miss (not Magic) -> TCGplayer details hit.
     seq = iter([
-        Resp(200, {"marketPrice": 87.35, "rarityName": "Ultra Rare"}),  # TCG product API
-        Resp(404, {"object": "error"}),     # Scryfall miss
-        Resp(200, {"data": []}),            # PokemonTCG no match
-        Resp(400, {"error": "no match"}),   # YGOPRODeck full-name miss
-        Resp(200, {"data": [ygo_card]}),    # YGOPRODeck trailing-tokens hit
+        Resp(404, {"object": "error"}),
+        Resp(200, {
+            "marketPrice": 87.35,
+            "rarityName": "Ultra Rare",
+            "productName": "Red-Eyes Dark Dragoon (Ultra Rare)",
+            "productUrlName": "Red-Eyes Dark Dragoon",
+            "productLineName": "YuGiOh",
+            "setName": "Rarity Collection 5",
+        }),
     ])
-
     from providers import catalog as catalog_module
     monkeypatch.setattr(
         catalog_module, "request_with_backoff",
@@ -395,40 +386,24 @@ def test_yugioh_tcgplayer_url_picks_correct_printing(client, monkeypatch):
     )
     assert res.status_code == 200
     body = res.json()
-    assert body["external_source"] == "ygoprodeck"
+    # New contract: TCGplayer is the source of truth for non-Magic URLs.
+    assert body["external_source"] == "tcgplayer"
+    assert body["external_id"] == "687314"
+    assert body["tcgplayer_product_id"] == "687314"
+    # Cleaned name (parenthetical stripped) — the productUrlName takes precedence
+    # because the productName had a trailing rarity tag.
     assert body["name"] == "Red-Eyes Dark Dragoon"
-    # Critical: the URL specified "Rarity Collection 5" — picker must land there
-    # and not on "25th Anniversary Rarity Collection II" or "Tin of Lost Memories".
     assert body["set_name"] == "Rarity Collection 5"
-    # TCGplayer's own product API is the authoritative price source — overrides
-    # whatever the per-game catalog had as a card-wide aggregate.
     assert body["rarity"] == "Ultra Rare"
     assert body["tcgplayer_price"] == 87.35
 
 
 def test_yugioh_tcgplayer_url_strips_rarity_suffix(client, monkeypatch):
-    """A TCGplayer URL whose slug ends with a rarity descriptor (e.g.
-    ``...-dark-magician-starlight-rare``) must NOT degrade to a single-token
-    YGOPRODeck search of "rare" — that returns "Rare Fish" alphabetically.
-
-    Fix: prefer TCGplayer's own ``productName`` ("Dark Magician (Starlight Rare)")
-    with the parenthetical stripped as the primary search query. The slug
-    fallback also strips trailing rarity tokens defensively.
+    """Phase C hybrid: trailing rarity descriptors in productName ("Dark Magician
+    (Starlight Rare)") are stripped for the saved card name. Source becomes
+    "tcgplayer" — no detour through YGOPRODeck. This is the canonical test
+    for the original "Rare Fish" / "$0.22" bug class.
     """
-    ygo_card = {
-        "id": 46986414,
-        "name": "Dark Magician",
-        "card_sets": [
-            {"set_name": "Rarity Collection 5",
-             "set_rarity": "Starlight Rare", "set_price": "0"},
-            {"set_name": "Legend of Blue Eyes White Dragon",
-             "set_rarity": "Ultra Rare", "set_price": "150.00"},
-        ],
-        "card_images": [{"image_url_small": "https://example.test/dm.jpg"}],
-        "card_prices": [{"tcgplayer_price": "1.50"}],
-        "type": "Normal Monster",
-    }
-
     class Resp:
         def __init__(self, status, payload):
             self.status_code = status
@@ -437,18 +412,15 @@ def test_yugioh_tcgplayer_url_strips_rarity_suffix(client, monkeypatch):
             return self._payload
 
     seq = iter([
-        Resp(200, {  # TCGplayer product details — productName carries truth
+        Resp(404, {"object": "error"}),     # Scryfall miss (not Magic)
+        Resp(200, {
             "marketPrice": 9.72,
             "rarityName": "Starlight Rare",
             "productName": "Dark Magician (Starlight Rare)",
             "productLineName": "YuGiOh",
             "setName": "Rarity Collection 5",
         }),
-        Resp(404, {"object": "error"}),     # Scryfall miss (not magic)
-        Resp(200, {"data": []}),            # PokemonTCG no match
-        Resp(200, {"data": [ygo_card]}),    # YGOPRODeck on cleaned productName "dark magician"
     ])
-
     from providers import catalog as catalog_module
     monkeypatch.setattr(
         catalog_module, "request_with_backoff",
@@ -464,9 +436,9 @@ def test_yugioh_tcgplayer_url_strips_rarity_suffix(client, monkeypatch):
     assert res.status_code == 200
     body = res.json()
     # Critical: NOT "Rare Fish" — must hit the actual card the URL points at.
-    assert body["external_source"] == "ygoprodeck"
-    assert body["name"] == "Dark Magician"
-    # Set-token preference still pins the printing the URL identifies.
+    assert body["external_source"] == "tcgplayer"
+    assert body["external_id"] == "687196"
+    assert body["name"] == "Dark Magician"  # Parenthetical stripped from productName.
     assert body["set_name"] == "Rarity Collection 5"
     assert body["rarity"] == "Starlight Rare"
     assert body["tcgplayer_price"] == 9.72
@@ -494,6 +466,11 @@ def test_strip_rarity_suffix_tokens():
     assert strip([]) == []
 
 
+@pytest.mark.skip(reason="Phase C removed the YGOPRODeck refresh branch entirely; "
+                          "this test described an intermediate fix that is no longer "
+                          "the strategy. Kept for history; see "
+                          "test_fetch_tcgplayer_price_prefers_product_id_over_ygoprodeck "
+                          "for the canonical refresh test.")
 def test_ygoprodeck_price_picks_per_printing_when_set_name_given(monkeypatch):
     """Refresh path bug: a Starlight Rare Dark Magician saved from a TCGplayer URL
     was getting current_price=$0.22 instead of $9.67 because _ygoprodeck_price was
@@ -674,19 +651,15 @@ def test_resolve_tcgplayer_url_returns_tcgplayer_product_id(monkeypatch, client)
         def json(self):
             return self._payload
 
-    ygo_card = {
-        "id": 46986414, "name": "Dark Magician",
-        "card_sets": [{"set_name": "Rarity Collection 5",
-                       "set_rarity": "Starlight Rare", "set_price": "0"}],
-        "card_images": [{"image_url_small": "https://example.test/dm.jpg"}],
-        "card_prices": [{"tcgplayer_price": "0.22"}],
-    }
     seq = iter([
-        Resp(200, {"marketPrice": 9.72, "productName": "Dark Magician (Starlight Rare)",
-                   "productLineName": "YuGiOh", "rarityName": "Starlight Rare"}),
-        Resp(404, {}),                           # Scryfall miss
-        Resp(200, {"data": []}),                 # PokemonTCG no match
-        Resp(200, {"data": [ygo_card]}),         # YGOPRODeck hit
+        Resp(404, {}),                                        # Scryfall miss (not Magic)
+        Resp(200, {                                           # TCGplayer details (authoritative)
+            "marketPrice": 9.72,
+            "productName": "Dark Magician (Starlight Rare)",
+            "productLineName": "YuGiOh",
+            "rarityName": "Starlight Rare",
+            "setName": "Rarity Collection 5",
+        }),
     ])
     from providers import catalog as catalog_module
     monkeypatch.setattr(
