@@ -49,16 +49,22 @@ def _self_heal_schema() -> None:
                 # Only auto-add columns the model marked nullable. Adding
                 # a NOT NULL column without a default would brick existing rows.
                 if not col.nullable:
-                    logger.warning(
-                        "Skipping schema self-heal for %s.%s: NOT NULL "
-                        "without default. Run a real Alembic migration.",
-                        table.name, col.name,
+                    msg = (
+                        f"Manual migration needed: column {table.name}.{col.name} "
+                        f"is NOT NULL without a default. Self-heal cannot add it."
                     )
+                    logger.warning(msg)
+                    status_module.record_schema_warning(msg)
                     continue
-                col_type = col.type.compile(dialect=engine.dialect)
-                stmt = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}'
-                logger.info("schema self-heal: %s", stmt)
-                conn.execute(text(stmt))
+                try:
+                    col_type = col.type.compile(dialect=engine.dialect)
+                    stmt = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}'
+                    logger.info("schema self-heal: %s", stmt)
+                    conn.execute(text(stmt))
+                except Exception as exc:  # noqa: BLE001 — log + surface, never crash boot
+                    msg = f"Schema self-heal failed for {table.name}.{col.name}: {exc}"
+                    logger.error(msg)
+                    status_module.record_schema_warning(msg)
 
 
 _self_heal_schema()

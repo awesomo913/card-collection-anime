@@ -10,10 +10,13 @@ search a real product and pull an authoritative TCGplayer price in one round tri
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
+
+import requests
 
 from .base import request_with_backoff
 
@@ -567,8 +570,17 @@ def fetch_tcgplayer_price(
             if details:
                 return _safe_float(details.get("marketPrice"))
             return None
-    except Exception as exc:
-        logger.warning("Catalog price refresh failed (%s/%s): %s", external_source, external_id, exc)
+    except (requests.RequestException, ValueError, KeyError, json.JSONDecodeError) as exc:
+        # Narrowed from bare ``except Exception`` so genuinely unexpected
+        # failures (programmer errors, signal handling, etc) propagate to
+        # the scheduler's outer try/except where they get recorded as
+        # last_price_update_error in /status. RequestException covers all
+        # network/HTTP issues; ValueError + JSONDecodeError cover bad
+        # response bodies; KeyError covers missing fields.
+        logger.error(
+            "Catalog price refresh failed (%s/%s tcg=%s): %s",
+            external_source, external_id, tcgplayer_product_id, exc,
+        )
     return None
 
 

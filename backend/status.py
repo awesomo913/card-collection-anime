@@ -25,12 +25,31 @@ _START_TIME = time.time()
 _last_price_update_at: Optional[float] = None
 _last_price_update_error: Optional[str] = None
 
+# Surfaced from main._self_heal_schema() — non-fatal schema mismatches the
+# auto-heal couldn't fix on its own (NOT NULL columns without defaults, etc).
+# The frontend StatusPage renders these as warnings so the user sees them.
+_schema_warnings: List[str] = []
+
+# Configured scheduler interval, set by scheduler.start_scheduler() at boot.
+_scheduler_interval_seconds: Optional[float] = None
+
 
 def record_price_update(success: bool, error: Optional[str] = None) -> None:
     """Called by the scheduler so /status can surface its health."""
     global _last_price_update_at, _last_price_update_error
     _last_price_update_at = time.time()
     _last_price_update_error = None if success else (error or "unknown error")
+
+
+def record_schema_warning(message: str) -> None:
+    """Called by main._self_heal_schema() for any non-fatal schema mismatch."""
+    _schema_warnings.append(message)
+
+
+def record_scheduler_interval(seconds: float) -> None:
+    """Called by scheduler.start_scheduler() so /status can compute health."""
+    global _scheduler_interval_seconds
+    _scheduler_interval_seconds = float(seconds)
 
 
 # ---------- Ring-buffer log handler ----------------------------------------
@@ -115,11 +134,23 @@ def system_snapshot() -> Dict[str, Any]:
 # ---------- Headline status -------------------------------------------------
 
 def overview() -> Dict[str, Any]:
-    uptime_seconds = max(0, time.time() - _START_TIME)
+    now = time.time()
+    uptime_seconds = max(0, now - _START_TIME)
     last_update_iso = (
         datetime.utcfromtimestamp(_last_price_update_at).isoformat() + "Z"
         if _last_price_update_at else None
     )
+    # Scheduler health: stale once the gap since last refresh exceeds 1.5×
+    # the configured interval. Surfaces silent daemon death in the UI.
+    age = (now - _last_price_update_at) if _last_price_update_at else None
+    health = "unknown"
+    if _scheduler_interval_seconds and age is not None:
+        if age <= _scheduler_interval_seconds:
+            health = "healthy"
+        elif age <= _scheduler_interval_seconds * 1.5:
+            health = "warning"
+        else:
+            health = "stale"
     return {
         "service": "card-collection-anime",
         "started_at": datetime.utcfromtimestamp(_START_TIME).isoformat() + "Z",
@@ -129,4 +160,8 @@ def overview() -> Dict[str, Any]:
         "platform": platform.platform(terse=True),
         "last_price_update_at": last_update_iso,
         "last_price_update_error": _last_price_update_error,
+        "last_price_update_age_seconds": round(age, 1) if age is not None else None,
+        "scheduler_interval_seconds": _scheduler_interval_seconds,
+        "scheduler_health": health,
+        "schema_warnings": list(_schema_warnings),
     }

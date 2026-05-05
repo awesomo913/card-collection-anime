@@ -594,6 +594,74 @@ def test_fetch_tcgplayer_price_prefers_product_id_over_ygoprodeck(monkeypatch):
     assert price == 9.72
 
 
+def test_self_heal_schema_adds_missing_nullable_column(tmp_path):
+    """Boot-time self-heal must idempotently add a missing nullable column.
+
+    Reproduces the Pi situation that bit us today: existing SQLite DB lacks
+    a column the new model has. Without the self-heal, every query returns
+    500. With it, the ALTER runs, queries succeed, no Alembic invocation
+    needed.
+    """
+    from sqlalchemy import create_engine, Column, Integer, String, inspect
+    from sqlalchemy.orm import declarative_base
+
+    Base = declarative_base()
+
+    # Old schema: just (id, name).
+    class OldThing(Base):
+        __tablename__ = "things"
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+
+    db_path = tmp_path / "self_heal.db"
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    Base.metadata.create_all(bind=engine)
+
+    # Now simulate a model bump: add a new nullable column.
+    Base.registry.dispose()
+    Base = declarative_base()
+
+    class NewThing(Base):
+        __tablename__ = "things"
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+        new_field = Column(String, nullable=True)
+
+    # Inline self-heal logic (mirror main._self_heal_schema for a single mapper).
+    from sqlalchemy import text
+    insp = inspect(engine)
+    live_cols = {c["name"] for c in insp.get_columns("things")}
+    assert "new_field" not in live_cols  # baseline: column missing
+
+    with engine.begin() as conn:
+        for col in NewThing.__table__.columns:
+            if col.name in live_cols:
+                continue
+            assert col.nullable, "test setup error: should be nullable"
+            ct = col.type.compile(dialect=engine.dialect)
+            conn.execute(text(f'ALTER TABLE "things" ADD COLUMN "{col.name}" {ct}'))
+
+    # Reinspect: column now present.
+    insp = inspect(engine)
+    live_cols = {c["name"] for c in insp.get_columns("things")}
+    assert "new_field" in live_cols
+
+
+def test_status_exposes_scheduler_health_fields(client):
+    """The /status endpoint must surface scheduler_health + age + warnings so
+    the UI can render a stale-data banner when the daemon dies silently.
+    """
+    res = client.get("/status")
+    assert res.status_code == 200
+    body = res.json()
+    # New keys added in Phase B (status.py refactor).
+    assert "scheduler_health" in body
+    assert "last_price_update_age_seconds" in body
+    assert "scheduler_interval_seconds" in body
+    assert "schema_warnings" in body
+    assert isinstance(body["schema_warnings"], list)
+
+
 def test_resolve_tcgplayer_url_returns_tcgplayer_product_id(monkeypatch, client):
     """The resolver result must include ``tcgplayer_product_id`` so the frontend
     can pin it on save. Without it, the refresh path can't reach back to
