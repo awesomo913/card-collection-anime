@@ -1,8 +1,9 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -11,6 +12,8 @@ from database import SessionLocal, engine
 from pathlib import Path
 from price_service import update_all_prices
 from providers import catalog as catalog_module
+from providers.deepseek import DeepSeekVision
+import identify_service
 import profile_backup
 import status as status_module
 from scheduler import start_scheduler
@@ -310,6 +313,132 @@ def catalog_resolve(url: str):
     if not result:
         raise HTTPException(status_code=404, detail="Could not resolve that URL")
     return result
+
+
+# ============================================================================
+# /identify — DeepSeek multimodal card identification
+#
+# Three endpoints share one backend client + service module:
+#   POST /identify/image — single image, JSON response with up to 3 candidates
+#   POST /identify/batch — many images, partial-failure tolerant
+#   POST /identify/video — Phase 3: ffmpeg frame extraction + multi-image call
+#
+# Security gates (matches the plan's Phase 1 checklist):
+# - Key only via DEEPSEEK_API_KEY env var. Endpoint 503s when missing.
+# - Per-file size cap enforced before reading body fully into memory.
+# - MIME allowlist. Anything else returns 415.
+# - Log filename + size + mime + duration. NEVER the binary.
+# ============================================================================
+
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024     # 10 MB per image
+_MAX_VIDEO_BYTES = 50 * 1024 * 1024     # 50 MB per video (Phase 3)
+_MAX_BATCH_ITEMS = 32                   # one upload batch ceiling
+_IMAGE_MIME_ALLOWLIST = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic",
+    "image/heif",
+}
+_VIDEO_MIME_ALLOWLIST = {"video/mp4", "video/quicktime", "video/webm"}
+
+
+def _require_deepseek_client() -> DeepSeekVision:
+    """Construct + sanity-check the DeepSeek client; raise 503 when missing."""
+    client = DeepSeekVision()
+    if not client.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Image identification is unavailable: DEEPSEEK_API_KEY env var "
+                "is not set on this Pi. Set it and restart uvicorn to enable."
+            ),
+        )
+    return client
+
+
+async def _read_image_upload(file: UploadFile) -> tuple[bytes, str]:
+    """Validate + read one image upload into memory; raise HTTPException on bad input."""
+    mime = (file.content_type or "").lower()
+    if mime not in _IMAGE_MIME_ALLOWLIST:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported image type {mime!r}. "
+                f"Allowed: {sorted(_IMAGE_MIME_ALLOWLIST)}"
+            ),
+        )
+    body = await file.read()
+    if len(body) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Image is {len(body)} bytes; cap is {_MAX_IMAGE_BYTES} bytes "
+                f"(~{_MAX_IMAGE_BYTES // (1024*1024)} MB). Resize and retry."
+            ),
+        )
+    return body, mime
+
+
+@app.post("/identify/image", response_model=schemas.IdentifyResult)
+async def identify_image(
+    file: UploadFile = File(...),
+    game_hint: Optional[str] = None,
+):
+    """Identify one card image. Returns up to 3 ranked candidates.
+
+    ``game_hint`` is optional; pass "magic"/"pokemon"/"yugioh" when the caller
+    already knows the game (e.g., the user is on the Add Card page with the
+    game dropdown set). The model is told to bias toward that game unless
+    the visual evidence clearly contradicts it.
+    """
+    client = _require_deepseek_client()
+    body, mime = await _read_image_upload(file)
+    logger.info(
+        "identify/image filename=%s bytes=%s mime=%s hint=%s",
+        file.filename, len(body), mime, game_hint,
+    )
+    return identify_service.identify_single(
+        client, file.filename or "image", body, mime, game_hint=game_hint,
+    )
+
+
+@app.post("/identify/batch", response_model=schemas.IdentifyBatchResponse)
+async def identify_batch(
+    files: List[UploadFile] = File(...),
+):
+    """Identify many card images in parallel. Per-item failures don't abort.
+
+    Ideal for blasting through a binder: drop 30 photos, get back a review
+    queue with each result tagged ok/error. Total wall-clock duration is
+    returned so the UI can spot DeepSeek rate-limit slowdowns.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    if len(files) > _MAX_BATCH_ITEMS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Batch size {len(files)} exceeds limit of {_MAX_BATCH_ITEMS}",
+        )
+    client = _require_deepseek_client()
+    items: list[tuple[str, bytes, str]] = []
+    for f in files:
+        body, mime = await _read_image_upload(f)
+        items.append((f.filename or "image", body, mime))
+    logger.info(
+        "identify/batch n=%s total_bytes=%s",
+        len(items), sum(len(b) for _, b, _ in items),
+    )
+    return identify_service.identify_batch(client, items)
+
+
+@app.post("/identify/video", response_model=schemas.IdentifyResult)
+async def identify_video(file: UploadFile = File(...)):
+    """Phase 3 placeholder. Returns 501 until ffmpeg frame extraction lands."""
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Video identification is not implemented yet (Phase 3). "
+            "Upload individual frames via /identify/image for now."
+        ),
+    )
 
 
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])

@@ -100,6 +100,16 @@ CARDMARKET_APP_TOKEN=...
 CARDMARKET_APP_SECRET=...
 CARDMARKET_ACCESS_TOKEN=...
 CARDMARKET_ACCESS_SECRET=...
+
+# DeepSeek multimodal identifier (image → ranked card candidates)
+# Without this, /identify/* endpoints return HTTP 503.
+DEEPSEEK_API_KEY=...
+# Optional model override. Default is deepseek-v4-pro (best vision accuracy).
+# Use deepseek-v4-flash for ~10× cheaper but lower accuracy on subtle printings.
+DEEPSEEK_MODEL=deepseek-v4-pro
+# Optional. Parallel workers for /identify/batch. Default 3 — keeps DeepSeek
+# concurrency tame so a 30-image drop doesn't trip rate limits.
+IDENTIFY_WORKERS=3
 ```
 
 ## Tests

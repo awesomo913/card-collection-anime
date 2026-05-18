@@ -19,8 +19,12 @@ if [ ! -x backend/venv/bin/uvicorn ]; then
   log "creating backend venv"
   python3 -m venv backend/venv
   backend/venv/bin/pip install --upgrade --quiet pip wheel
-  backend/venv/bin/pip install -r backend/requirements.txt
 fi
+# Always refresh deps on boot — pip is a no-op when everything's satisfied,
+# but this picks up new requirements (e.g. python-multipart added for /identify)
+# without forcing the user to nuke the venv. Runs in ~2-5s when up-to-date.
+log "ensuring backend deps"
+backend/venv/bin/pip install --quiet -r backend/requirements.txt
 
 # --- Apply pending Alembic migrations (idempotent: no-op if already at head) ---
 log "alembic upgrade head"

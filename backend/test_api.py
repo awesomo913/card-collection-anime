@@ -5,9 +5,10 @@ disabled via DISABLE_SCHEDULER so background threads don't race the test process
 """
 from __future__ import annotations
 
+import importlib
+import json
 import os
 import sys
-import importlib
 from pathlib import Path
 
 import pytest
@@ -675,6 +676,204 @@ def test_resolve_tcgplayer_url_returns_tcgplayer_product_id(monkeypatch, client)
     assert res.status_code == 200
     body = res.json()
     assert body["tcgplayer_product_id"] == "687196"
+
+
+# ----- /identify (DeepSeek multimodal) --------------------------------------
+#
+# All tests monkeypatch the DeepSeekVision class so they never touch the real
+# network. The patch replaces:
+#   - is_configured() -> always True (so endpoint doesn't 503)
+#   - identify(...) -> returns a canned DeepSeekResult with the JSON string
+#     we want the service layer to parse.
+#
+# The shape mirrors what `providers.deepseek.DeepSeekVision.identify()` would
+# return on a real call (raw_content is the JSON the model spat out).
+# ---------------------------------------------------------------------------
+
+def _patch_deepseek(monkeypatch, raw_content, *, raise_exc=None):
+    """Helper: monkeypatch DeepSeekVision so every test stays offline."""
+    from providers import deepseek as ds
+    from providers.deepseek import DeepSeekResult, DeepSeekVisionError
+
+    def fake_identify(self, images, system_prompt, user_prompt, **kw):
+        if raise_exc is not None:
+            raise raise_exc
+        return DeepSeekResult(
+            raw_content=raw_content,
+            model="deepseek-v4-pro-test",
+            prompt_tokens=100,
+            completion_tokens=50,
+        )
+
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: True)
+    monkeypatch.setattr(ds.DeepSeekVision, "identify", fake_identify)
+    # Also keep the same patch reachable from the import location in main.
+    import main
+    monkeypatch.setattr(main, "DeepSeekVision", ds.DeepSeekVision)
+
+
+def _multipart(name="dark.jpg", body=b"\xff\xd8\xff\xe0fakejpg", mime="image/jpeg"):
+    """Build the (files=...) kwarg shape TestClient expects for multipart."""
+    return {"file": (name, body, mime)}
+
+
+def test_identify_image_happy_path(client, monkeypatch):
+    """Single image → 1 candidate with TCGplayer URL preserved."""
+    _patch_deepseek(monkeypatch, json.dumps({
+        "candidates": [{
+            "game": "yugioh",
+            "name": "Dark Magician",
+            "set_name": "Rarity Collection 5",
+            "printing_notes": "Starlight Rare",
+            "confidence": 0.92,
+            "justification": "Distinctive starlight foil treatment visible.",
+            "suggested_urls": [
+                "https://www.tcgplayer.com/product/687196/yugioh-rarity-collection-5-dark-magician-starlight-rare"
+            ],
+            "search_queries": ["dark magician starlight rare rarity collection"],
+        }]
+    }))
+    res = client.post("/identify/image", files=_multipart())
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["source_filename"] == "dark.jpg"
+    assert body["error"] is None
+    assert len(body["candidates"]) == 1
+    c = body["candidates"][0]
+    assert c["game"] == "yugioh"
+    assert c["name"] == "Dark Magician"
+    assert c["confidence"] == 0.92
+    assert c["suggested_urls"][0].startswith("https://www.tcgplayer.com/product/687196/")
+
+
+def test_identify_strips_hallucinated_url(client, monkeypatch):
+    """URL from a non-allowlisted host must be dropped silently."""
+    _patch_deepseek(monkeypatch, json.dumps({
+        "candidates": [{
+            "game": "magic",
+            "name": "Black Lotus",
+            "confidence": 0.7,
+            "justification": "Alpha border.",
+            "suggested_urls": [
+                "https://malicious.example.com/steal",   # MUST be dropped
+                "https://scryfall.com/card/lea/232/black-lotus",   # OK
+            ],
+            "search_queries": ["black lotus alpha"],
+        }]
+    }))
+    res = client.post("/identify/image", files=_multipart(name="lotus.png", mime="image/png"))
+    assert res.status_code == 200
+    urls = res.json()["candidates"][0]["suggested_urls"]
+    assert len(urls) == 1
+    assert "scryfall.com" in urls[0]
+    assert all("malicious.example.com" not in u for u in urls)
+
+
+def test_identify_clamps_invalid_confidence(client, monkeypatch):
+    """Model returning confidence > 1 or < 0 gets clamped into [0, 1]."""
+    _patch_deepseek(monkeypatch, json.dumps({
+        "candidates": [
+            {"game": "magic", "name": "X", "confidence": 1.5,
+             "justification": "?", "search_queries": ["x"]},
+            {"game": "magic", "name": "Y", "confidence": -0.2,
+             "justification": "?", "search_queries": ["y"]},
+        ]
+    }))
+    res = client.post("/identify/image", files=_multipart())
+    cands = res.json()["candidates"]
+    confidences = {c["name"]: c["confidence"] for c in cands}
+    assert confidences["X"] == 1.0
+    assert confidences["Y"] == 0.0
+
+
+def test_identify_normalises_unknown_game(client, monkeypatch):
+    """Garbage in `game` field gets normalised to 'unknown' instead of erroring."""
+    _patch_deepseek(monkeypatch, json.dumps({
+        "candidates": [{
+            "game": "made-up-game",
+            "name": "Something",
+            "confidence": 0.3,
+            "search_queries": ["something"],
+        }]
+    }))
+    res = client.post("/identify/image", files=_multipart())
+    assert res.json()["candidates"][0]["game"] == "unknown"
+
+
+def test_identify_handles_parse_failure(client, monkeypatch):
+    """Model returning non-JSON → error field set, not a 500."""
+    _patch_deepseek(monkeypatch, "this is not json {{{")
+    res = client.post("/identify/image", files=_multipart())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["candidates"] == []
+    assert body["error"] and "unparseable" in body["error"].lower()
+
+
+def test_identify_503_when_key_missing(client, monkeypatch):
+    """No DEEPSEEK_API_KEY → 503 with actionable hint, not a generic 500."""
+    from providers import deepseek as ds
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: False)
+    res = client.post("/identify/image", files=_multipart())
+    assert res.status_code == 503
+    assert "DEEPSEEK_API_KEY" in res.json()["detail"]
+
+
+def test_identify_rejects_unsupported_mime(client, monkeypatch):
+    """Plain text upload → 415, no model call attempted."""
+    _patch_deepseek(monkeypatch, "{}")  # would succeed if reached
+    res = client.post("/identify/image", files={
+        "file": ("notes.txt", b"hello world", "text/plain"),
+    })
+    assert res.status_code == 415
+    assert "Unsupported" in res.json()["detail"]
+
+
+def test_identify_batch_partial_failure(client, monkeypatch):
+    """One bad result in a batch must not poison the others."""
+    from providers import deepseek as ds
+    from providers.deepseek import DeepSeekResult, DeepSeekVisionError
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: True)
+
+    call_count = {"n": 0}
+
+    def flaky_identify(self, images, system_prompt, user_prompt, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise DeepSeekVisionError("simulated 429 then exhausted retries")
+        return DeepSeekResult(
+            raw_content=json.dumps({"candidates": [{
+                "game": "magic", "name": f"Card{call_count['n']}",
+                "confidence": 0.8, "search_queries": [f"card{call_count['n']}"],
+            }]}),
+            model="test", prompt_tokens=10, completion_tokens=5,
+        )
+
+    monkeypatch.setattr(ds.DeepSeekVision, "identify", flaky_identify)
+
+    res = client.post("/identify/batch", files=[
+        ("files", ("a.jpg", b"\xff\xd8\xff", "image/jpeg")),
+        ("files", ("b.jpg", b"\xff\xd8\xff", "image/jpeg")),
+        ("files", ("c.jpg", b"\xff\xd8\xff", "image/jpeg")),
+    ])
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["results"]) == 3
+    errors = [r["error"] for r in body["results"] if r["error"]]
+    successes = [r for r in body["results"] if not r["error"]]
+    assert len(errors) == 1
+    assert len(successes) == 2
+    assert all(s["candidates"] for s in successes)
+
+
+def test_identify_video_returns_501(client, monkeypatch):
+    """Phase 1 ships a 501 stub; Phase 3 will replace it."""
+    _patch_deepseek(monkeypatch, "{}")
+    res = client.post("/identify/video", files={
+        "file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4"),
+    })
+    assert res.status_code == 501
+    assert "Phase 3" in res.json()["detail"]
 
 
 def test_profile_export_import_roundtrip(client):

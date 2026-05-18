@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Optional, Dict
+from pydantic import BaseModel, ConfigDict, Field
+from typing import List, Literal, Optional, Dict
 from datetime import datetime
 
 class CardBase(BaseModel):
@@ -125,3 +125,41 @@ class CatalogResult(BaseModel):
     # product ID. Frontend forwards this on save so refresh can hit TCGplayer's
     # product details API directly for an authoritative per-printing price.
     tcgplayer_product_id: Optional[str] = None
+
+
+# ----- /identify endpoints (DeepSeek multimodal) ---------------------------
+
+class IdentifyCandidate(BaseModel):
+    """One ranked guess from the multimodal identifier.
+
+    The frontend renders these as buttons under each uploaded image. Clicking
+    `Use TCGplayer URL` pipes ``suggested_urls[0]`` into the existing
+    /catalog/resolve flow; clicking `Try search query` pipes
+    ``search_queries[0]`` into the existing /catalog/search flow.
+    """
+    game: Literal["magic", "pokemon", "yugioh", "unknown"]
+    name: str
+    set_name: Optional[str] = None
+    printing_notes: Optional[str] = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    justification: str = ""
+    suggested_urls: List[str] = []
+    search_queries: List[str] = []
+
+
+class IdentifyResult(BaseModel):
+    """Per-image outcome from one DeepSeek call.
+
+    ``error`` is set when the call (or the model's JSON parse) failed for
+    THIS image specifically. Callers see a partial-success batch instead of
+    a 500.
+    """
+    source_filename: str
+    candidates: List[IdentifyCandidate] = []
+    error: Optional[str] = None
+
+
+class IdentifyBatchResponse(BaseModel):
+    """Wrapper around N IdentifyResults plus the total wall-clock duration."""
+    results: List[IdentifyResult]
+    duration_seconds: float
