@@ -1018,7 +1018,13 @@ def test_forecast_cache_hit_on_second_call(client, monkeypatch):
 
 
 def test_forecast_clamps_invalid_horizons(client, monkeypatch):
-    """Model returning low > high → backend swaps; target outside range → re-centred."""
+    """Model returning low > high → backend swaps; target outside range → re-centred.
+
+    Confidence clamp now layered: first to [0, 1], then to the rubric ceiling
+    derived from the price history. The seed has 5 samples over 4 days, which
+    lands ceiling=0.3 (n<10 gate fires) so even a model claim of 1.5 (after
+    [0,1] clamp = 1.0) gets pulled down to 0.3.
+    """
     card_id = _seed_card_with_history(client, name="Clamp Test Card")
     _patch_deepseek_chat(monkeypatch, json.dumps({
         "horizons": [
@@ -1033,13 +1039,276 @@ def test_forecast_clamps_invalid_horizons(client, monkeypatch):
     res = client.get(f"/forecast/card/{card_id}")
     body = res.json()
     h0, h1 = body["horizons"]
-    # low/high swapped to correct order; confidence clamped to 1.0
+    # low/high swapped to correct order
     assert h0["low"] == 5.0 and h0["high"] == 9.0
-    assert h0["confidence"] == 1.0
+    # confidence: 1.5 → 1.0 ([0,1] clamp) → 0.3 (rubric ceiling at n=5)
+    assert h0["confidence"] == 0.3
     # target re-centred when out of range
     assert h1["target"] == round((1.0 + 10.0) / 2.0, 2)
+    # -0.2 → 0.0 ([0,1] clamp); rubric min() against 0.3 keeps 0.0
     assert h1["confidence"] == 0.0
     assert body["direction"] == "unknown"
+
+
+# ---- Forecast: derived metrics + rubric clamp (new) ------------------------
+
+def test_compute_history_metrics_flat():
+    """A perfectly flat history has CV ≈ 0, slope ≈ 0, ratio ≈ 1."""
+    from forecast_service import _compute_history_metrics
+    from datetime import datetime, timedelta
+    base = datetime(2026, 5, 1, 12, 0, 0)
+    history = [
+        ((base + timedelta(days=i)).isoformat(), "TCGPlayer", 10.00)
+        for i in range(8)
+    ]
+    m = _compute_history_metrics(history)
+    assert m["sample_count"] == 8
+    assert m["cv"] == 0.0
+    assert m["trend_slope_pct_per_day"] == 0.0
+    assert abs(m["recent_vs_old_ratio"] - 1.0) < 1e-6
+    assert m["max_step_pct"] == 0.0
+
+
+def test_compute_history_metrics_uptrend():
+    """Monotonic-rising history has positive slope and recent_vs_old > 1."""
+    from forecast_service import _compute_history_metrics
+    from datetime import datetime, timedelta
+    base = datetime(2026, 5, 1, 12, 0, 0)
+    prices = [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5]
+    history = [
+        ((base + timedelta(days=i)).isoformat(), "TCGPlayer", p)
+        for i, p in enumerate(prices)
+    ]
+    m = _compute_history_metrics(history)
+    assert m["sample_count"] == 10
+    assert m["trend_slope_pct_per_day"] > 0
+    assert m["recent_vs_old_ratio"] > 1.0
+    assert m["cv"] > 0  # non-zero on a moving series
+    assert m["days_covered"] >= 8.99  # 0..9 day offsets => 9 days span
+
+
+def test_compute_history_metrics_empty():
+    """Empty history returns sentinel defaults that won't break the prompt."""
+    from forecast_service import _compute_history_metrics
+    m = _compute_history_metrics([])
+    assert m["sample_count"] == 0
+    assert m["cv"] == 0.0
+    assert m["recent_vs_old_ratio"] == 1.0
+
+
+def test_compute_source_agreement_tight():
+    """Three sources within 5% → tight band."""
+    from forecast_service import _compute_source_agreement
+    a = _compute_source_agreement(
+        {"TCGPlayer": 10.00, "eBay": 10.20, "CardMarket": 10.40},
+    )
+    assert a["agreement_band"] == "tight"
+    assert a["source_count"] == 3
+    assert a["spread_pct"] < 5.0
+
+
+def test_compute_source_agreement_loose():
+    """5-15% spread → loose."""
+    from forecast_service import _compute_source_agreement
+    a = _compute_source_agreement(
+        {"TCGPlayer": 10.0, "eBay": 11.0},  # ~10% spread
+    )
+    assert a["agreement_band"] == "loose"
+
+
+def test_compute_source_agreement_wide():
+    """Sources spanning >15% → wide."""
+    from forecast_service import _compute_source_agreement
+    a = _compute_source_agreement(
+        {"TCGPlayer": 10.0, "eBay": 12.5, "CardMarket": 8.0},  # ~45% spread
+    )
+    assert a["agreement_band"] == "wide"
+
+
+def test_compute_source_agreement_unknown_with_too_few_sources():
+    """<2 valid sources → 'unknown' band; downstream treats as dampener."""
+    from forecast_service import _compute_source_agreement
+    assert _compute_source_agreement({"TCGPlayer": 10.0})["agreement_band"] == "unknown"
+    assert _compute_source_agreement(None)["agreement_band"] == "unknown"
+    assert _compute_source_agreement({})["agreement_band"] == "unknown"
+
+
+def test_rubric_confidence_ceiling_tiers():
+    """Worst-tier-wins: lowest applicable ceiling fires."""
+    from forecast_service import _rubric_confidence_ceiling
+    # n<5 OR days<3 → 0.2
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 4, "cv": 0.05, "days_covered": 10.0},
+        {"agreement_band": "tight"},
+    ) == 0.2
+    # n<10 → 0.3
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 8, "cv": 0.05, "days_covered": 10.0},
+        {"agreement_band": "tight"},
+    ) == 0.3
+    # CV high → 0.3
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 50, "cv": 0.25, "days_covered": 30.0},
+        {"agreement_band": "tight"},
+    ) == 0.3
+    # band wide → 0.3
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 50, "cv": 0.05, "days_covered": 30.0},
+        {"agreement_band": "wide"},
+    ) == 0.3
+    # 10 ≤ n < 20 → 0.7
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 15, "cv": 0.05, "days_covered": 30.0},
+        {"agreement_band": "tight"},
+    ) == 0.7
+    # All gates passed → 1.0
+    assert _rubric_confidence_ceiling(
+        {"sample_count": 30, "cv": 0.05, "days_covered": 30.0},
+        {"agreement_band": "tight"},
+    ) == 1.0
+
+
+def test_forecast_confidence_capped_by_rubric(client, monkeypatch):
+    """Thin-data card: model claims 0.95 across the board → server clamps to ≤0.3.
+
+    Seed has 5 samples over 4 days from one source. Rubric ceiling lands
+    at 0.3 (n<10 gate). Model says 0.95 → ALL horizons must come back ≤ 0.3.
+    """
+    card_id = _seed_card_with_history(client, name="Rubric Cap Card")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7, "low": 6.5, "high": 8.0, "target": 7.2, "confidence": 0.95},
+            {"days": 30, "low": 6.0, "high": 9.0, "target": 7.5, "confidence": 0.90},
+            {"days": 90, "low": 5.0, "high": 12.0, "target": 8.0, "confidence": 0.85},
+        ],
+        "direction": "up", "reasoning": "test", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+    body = client.get(f"/forecast/card/{card_id}").json()
+    assert all(h["confidence"] <= 0.3 for h in body["horizons"]), \
+        f"rubric did not cap confidence: {body['horizons']}"
+
+
+# ---- Forecast: batch endpoint (new) ----------------------------------------
+
+def test_forecast_batch_empty_returns_empty_aggregate(client):
+    """Empty items list → 200 with empty results + empty aggregate."""
+    res = client.post("/forecast/batch", json={"items": []})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["results"] == []
+    assert body["aggregate"] == []
+
+
+def test_forecast_batch_rejects_oversized(client):
+    """501 items in a single batch → 422 (cap is 500)."""
+    payload = {"items": [{"type": "card", "id": 1} for _ in range(501)]}
+    res = client.post("/forecast/batch", json=payload)
+    assert res.status_code == 422
+    assert "limit" in res.json()["detail"].lower()
+
+
+def test_forecast_batch_aggregate_math(client, monkeypatch):
+    """Aggregate = Σ(qty × horizon) across included items; weighted target correct."""
+    card_id = _seed_card_with_history(client, name="Batch Agg Card")
+    # Model claims 0.3 — survives the rubric clamp (ceiling is 0.3) and
+    # meets the aggregate confidence floor (>=0.3) so the item is INCLUDED.
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7,  "low": 8.0, "high": 12.0, "target": 10.0, "confidence": 0.3},
+            {"days": 30, "low": 7.0, "high": 14.0, "target": 11.0, "confidence": 0.3},
+            {"days": 90, "low": 6.0, "high": 16.0, "target": 12.0, "confidence": 0.3},
+        ],
+        "direction": "up", "reasoning": "test", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+
+    res = client.post(
+        "/forecast/batch", json={"items": [{"type": "card", "id": card_id}]},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["results"]) == 1
+    row = body["results"][0]
+    assert row["id"] == card_id
+    assert row["forecast"] is not None
+    qty = row["qty"]
+    assert qty >= 1
+    seven = next(h for h in body["aggregate"] if h["days"] == 7)
+    assert seven["projected_low"] == round(qty * 8.0, 2)
+    assert seven["projected_target"] == round(qty * 10.0, 2)
+    assert seven["projected_high"] == round(qty * 12.0, 2)
+    assert seven["items_included"] == 1
+    assert seven["items_skipped"] == 0
+    # Weighted target = Σ(target × qty × conf) / Σ(qty × conf) = (10×qty×0.3)/(qty×0.3) = 10.0
+    assert seven["confidence_weighted_target"] == 10.0
+
+
+def test_forecast_batch_low_confidence_items_skipped(client, monkeypatch):
+    """Item with conf < 0.3 contributes current_price (no projection trusted)."""
+    card_id = _seed_card_with_history(client, name="Skipped Item Card")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7,  "low": 100.0, "high": 200.0, "target": 150.0, "confidence": 0.1},
+            {"days": 30, "low": 100.0, "high": 200.0, "target": 150.0, "confidence": 0.1},
+            {"days": 90, "low": 100.0, "high": 200.0, "target": 150.0, "confidence": 0.1},
+        ],
+        "direction": "up", "reasoning": "test", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+
+    res = client.post(
+        "/forecast/batch", json={"items": [{"type": "card", "id": card_id}]},
+    )
+    body = res.json()
+    row = body["results"][0]
+    cur = row["current_price"] or 0.0
+    qty = row["qty"]
+    seven = next(h for h in body["aggregate"] if h["days"] == 7)
+    assert seven["items_included"] == 0
+    assert seven["items_skipped"] == 1
+    # Skipped item contributes current × qty in ALL projection columns —
+    # NOT the model's $150 fantasy figure.
+    expected = round(cur * qty, 2)
+    assert seven["projected_target"] == expected
+    assert seven["projected_low"] == expected
+    assert seven["projected_high"] == expected
+
+
+def test_forecast_batch_handles_404_per_row(client, monkeypatch):
+    """A missing item id doesn't abort the batch — its row carries `error`."""
+    card_id = _seed_card_with_history(client, name="One Real Card")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7, "low": 1, "high": 2, "target": 1.5, "confidence": 0.3},
+        ],
+        "direction": "flat", "reasoning": "x", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+
+    res = client.post("/forecast/batch", json={
+        "items": [
+            {"type": "card", "id": card_id},
+            {"type": "card", "id": 999999},
+        ],
+    })
+    assert res.status_code == 200
+    rows = res.json()["results"]
+    assert len(rows) == 2
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[card_id]["error"] is None
+    assert by_id[card_id]["forecast"] is not None
+    assert by_id[999999]["error"] is not None
+
+
+def test_forecast_batch_503_when_key_missing(client, monkeypatch):
+    """Missing DEEPSEEK_API_KEY → 503 (matches single-item endpoint contract)."""
+    from providers import deepseek as ds
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: False)
+    res = client.post(
+        "/forecast/batch", json={"items": [{"type": "card", "id": 1}]},
+    )
+    assert res.status_code == 503
 
 
 def test_forecast_503_when_key_missing(client, monkeypatch):

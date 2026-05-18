@@ -8,6 +8,7 @@ import SealedListPage from './pages/SealedListPage';
 import SealedDetailPage from './pages/SealedDetailPage';
 import AddSealedPage from './pages/AddSealedPage';
 import DashboardPage from './pages/DashboardPage';
+import ForecastAllPage from './pages/ForecastAllPage';
 import PriceSnapshotPage from './pages/PriceSnapshotPage';
 import SettingsPage from './pages/SettingsPage';
 import StatusPage from './pages/StatusPage';
@@ -64,6 +65,10 @@ function App() {
             <Route path="/sealed/:id/edit" element={<AddSealedPage />} />
             <Route path="/sealed/edit/:id" element={<RedirectEdit basePath="/sealed" />} />
             <Route path="/snapshot" element={<PriceSnapshotPage />} />
+            {/* Whole-collection forecast. Manual trigger from Dashboard button.
+                Aggregate banner + per-item grid. Speculative — disclaimer baked
+                into the page. */}
+            <Route path="/forecast-all" element={<ForecastAllPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/status" element={<StatusPage />} />
           </Routes>

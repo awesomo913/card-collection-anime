@@ -49,6 +49,7 @@ const DashboardPage = () => {
         <Link to="/cards/add" className="add-button">+ Add Card</Link>
         <Link to="/sealed/add" className="add-button" style={{ marginLeft: 10 }}>+ Add Sealed</Link>
         <Link to="/snapshot" className="add-button" style={{ marginLeft: 10 }}>View Price Snapshot</Link>
+        <Link to="/forecast-all" className="add-button" style={{ marginLeft: 10 }}>📈 Forecast All</Link>
       </div>
     </section>
   );

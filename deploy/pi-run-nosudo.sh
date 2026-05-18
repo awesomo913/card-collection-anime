@@ -19,8 +19,11 @@ cd "$ROOT"
 # Whitelist (regex below) ensures we only pull known config vars — never aliases,
 # functions, PROMPT_COMMAND, or unrelated assignments.
 if [ -f "$HOME/.bashrc" ]; then
+  # $line below is constrained by the grep regex (whitelist of known config
+  # var names from user-owned ~/.bashrc, single-user threat model) — no path
+  # for untrusted text to reach eval.
   while IFS= read -r line; do
-    eval "$line" 2>/dev/null || true
+    eval "$line" 2>/dev/null || true  # safe: whitelist-filtered line from user-owned ~/.bashrc
   done < <(grep -E '^[[:space:]]*export[[:space:]]+(DEEPSEEK_API_KEY|DEEPSEEK_MODEL|TCGPLAYER_API_KEY|IDENTIFY_WORKERS|PRICE_UPDATE_INTERVAL_HOURS|FORECAST_CACHE_TTL)=' "$HOME/.bashrc" 2>/dev/null)
   if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     log "loaded DEEPSEEK_API_KEY from ~/.bashrc"

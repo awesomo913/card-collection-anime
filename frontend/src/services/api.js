@@ -83,6 +83,12 @@ export const forecastCard = (id) =>
   api.get(`/forecast/card/${id}`, { timeout: 60000 });
 export const forecastSealed = (id) =>
   api.get(`/forecast/sealed/${id}`, { timeout: 60000 });
+// Whole-collection batch. Cold-cache run can take minutes on 100+ items; cap
+// at 10min and let the UI render a long-running spinner. Cached re-runs are
+// near-instant (server's (item, last_history_ts) key fires before any DeepSeek
+// call so unchanged items are free).
+export const forecastBatch = (items) =>
+  api.post('/forecast/batch', { items }, { timeout: 600000 });
 
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
@@ -92,7 +98,7 @@ const apiClient = {
   exportProfile, importProfile,
   getStatus, getStatusLogs,
   identifyImage, identifyBatch, identifyVideo,
-  forecastCard, forecastSealed,
+  forecastCard, forecastSealed, forecastBatch,
 };
 
 export default apiClient;

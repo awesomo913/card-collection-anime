@@ -1,5 +1,7 @@
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -506,6 +508,178 @@ def forecast_sealed(sealed_id: int, db: Session = Depends(get_db)):
     client = _require_deepseek_client()
     item, history = _fetch_item_and_history(db, "sealed", sealed_id)
     return forecast_service.forecast_item(client, "sealed", item, history)
+
+
+# Whole-collection forecast batch. Bounded fan-out via thread pool because each
+# forecast_item() call is a blocking HTTP call to DeepSeek; semaphore-style
+# concurrency keeps us under their per-key rate limit (no published number,
+# so 4 workers is the conservative match with IDENTIFY_WORKERS).
+_FORECAST_WORKERS = int(os.environ.get("FORECAST_WORKERS", "4"))
+_MAX_FORECAST_BATCH = 500
+_AGGREGATE_HORIZONS = (7, 30, 90)
+_AGGREGATE_CONFIDENCE_FLOOR = 0.3
+
+
+def _compute_batch_aggregate(
+    rows: List[schemas.BatchForecastResultRow],
+) -> List[schemas.AggregateHorizon]:
+    """Portfolio roll-up across the batch.
+
+    For each horizon (7/30/90d):
+      - Items with a forecast at ≥ floor confidence contribute qty × horizon.{low,target,high}.
+      - Items below floor / missing forecast / errored contribute qty × current_price
+        in all three columns (no projection trusted) and increment items_skipped.
+      - confidence_weighted_target = Σ(qty × target × confidence) / Σ(qty × confidence)
+        across included items only.
+    """
+    out: list[schemas.AggregateHorizon] = []
+    for days in _AGGREGATE_HORIZONS:
+        cur_total = 0.0
+        proj_low = 0.0
+        proj_tgt = 0.0
+        proj_hi = 0.0
+        weighted_num = 0.0
+        weighted_den = 0.0
+        included = 0
+        skipped = 0
+        for row in rows:
+            qty = row.qty or 0
+            current = row.current_price or 0.0
+            cur_total += current * qty
+            horizon = None
+            if row.forecast is not None and row.error is None:
+                horizon = next(
+                    (h for h in row.forecast.horizons if h.days == days), None,
+                )
+            if horizon is None or horizon.confidence < _AGGREGATE_CONFIDENCE_FLOOR:
+                proj_low += current * qty
+                proj_tgt += current * qty
+                proj_hi += current * qty
+                skipped += 1
+                continue
+            proj_low += horizon.low * qty
+            proj_tgt += horizon.target * qty
+            proj_hi += horizon.high * qty
+            weighted_num += horizon.target * qty * horizon.confidence
+            weighted_den += qty * horizon.confidence
+            included += 1
+        weighted = (weighted_num / weighted_den) if weighted_den > 0 else 0.0
+        out.append(schemas.AggregateHorizon(
+            days=days,
+            current_total=round(cur_total, 2),
+            projected_low=round(proj_low, 2),
+            projected_target=round(proj_tgt, 2),
+            projected_high=round(proj_hi, 2),
+            confidence_weighted_target=round(weighted, 2),
+            items_included=included,
+            items_skipped=skipped,
+        ))
+    return out
+
+
+@app.post("/forecast/batch", response_model=schemas.BatchForecastResponse)
+def forecast_batch(
+    req: schemas.BatchForecastRequest,
+    db: Session = Depends(get_db),
+):
+    """Forecast many items in one call. Returns per-item rows + portfolio roll-up.
+
+    Per-item failures don't abort the batch — each row carries its own ``error``
+    field. Cache hits cost nothing (the existing ``_cache`` key fires before
+    any DeepSeek call), so re-running while history is unchanged is ~free.
+    """
+    if not req.items:
+        return schemas.BatchForecastResponse(
+            results=[], aggregate=[], duration_seconds=0.0,
+            cache_hits=0, cache_misses=0, model="(none)",
+        )
+    if len(req.items) > _MAX_FORECAST_BATCH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Batch size {len(req.items)} exceeds limit of "
+                f"{_MAX_FORECAST_BATCH}. Split into smaller requests."
+            ),
+        )
+    client = _require_deepseek_client()
+    started = time.monotonic()
+
+    # Pre-load items + history serially (DB-bound + cheap). Doing this on the
+    # request thread avoids opening N parallel DB sessions for the same Pi.
+    prepared: list[tuple[int, str, object, list, Optional[str]]] = []
+    for idx, it in enumerate(req.items):
+        try:
+            item, history = _fetch_item_and_history(db, it.type, it.id)
+            prepared.append((idx, it.type, item, history, None))
+        except HTTPException as exc:
+            prepared.append((idx, it.type, None, [], str(exc.detail)))
+
+    results: list[Optional[schemas.BatchForecastResultRow]] = [None] * len(prepared)
+
+    def _run_one(prep_tuple):
+        idx, item_type, item, history, prep_err = prep_tuple
+        # Capture the original id so 404'd items still show up in results.
+        original_id = req.items[idx].id
+        if prep_err is not None:
+            return idx, schemas.BatchForecastResultRow(
+                type=item_type, id=original_id, name="(unknown)", qty=0,
+                current_price=None, forecast=None, error=prep_err,
+            )
+        try:
+            forecast = forecast_service.forecast_item(
+                client, item_type, item, history,
+            )
+            return idx, schemas.BatchForecastResultRow(
+                type=item_type, id=item.id, name=item.name,
+                qty=int(getattr(item, "quantity", 1) or 1),
+                current_price=item.current_price,
+                forecast=forecast, error=None,
+            )
+        except Exception as exc:  # noqa: BLE001 — batch row tolerates any error
+            logger.warning(
+                "forecast/batch row failed type=%s id=%s: %s",
+                item_type, original_id, exc,
+            )
+            return idx, schemas.BatchForecastResultRow(
+                type=item_type, id=item.id, name=item.name,
+                qty=int(getattr(item, "quantity", 1) or 1),
+                current_price=item.current_price,
+                forecast=None, error=str(exc),
+            )
+
+    cache_hits = 0
+    cache_misses = 0
+    last_model = "(none)"
+    with ThreadPoolExecutor(max_workers=_FORECAST_WORKERS) as pool:
+        for fut in as_completed([pool.submit(_run_one, p) for p in prepared]):
+            idx, row = fut.result()
+            results[idx] = row
+            if row.forecast is not None:
+                if row.forecast.cached:
+                    cache_hits += 1
+                else:
+                    cache_misses += 1
+                last_model = row.forecast.model
+
+    # Fill any None slots defensively (shouldn't happen but keeps the type honest).
+    final_rows: list[schemas.BatchForecastResultRow] = [
+        r if r is not None else schemas.BatchForecastResultRow(
+            type="card", id=req.items[i].id, error="internal: row never resolved",
+        )
+        for i, r in enumerate(results)
+    ]
+    aggregate = _compute_batch_aggregate(final_rows)
+    duration = time.monotonic() - started
+    logger.info(
+        "forecast/batch n=%s duration=%.2fs hits=%s misses=%s",
+        len(final_rows), duration, cache_hits, cache_misses,
+    )
+    return schemas.BatchForecastResponse(
+        results=final_rows, aggregate=aggregate,
+        duration_seconds=round(duration, 3),
+        cache_hits=cache_hits, cache_misses=cache_misses,
+        model=last_model,
+    )
 
 
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])

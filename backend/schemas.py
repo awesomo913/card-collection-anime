@@ -198,3 +198,60 @@ class ForecastResult(BaseModel):
     model: str
     history_samples_used: int = 0
     cached: bool = False  # True when served from in-memory cache
+
+
+# ----- /forecast/batch (whole-collection sweep) -----------------------------
+
+class BatchForecastItem(BaseModel):
+    """One item the caller wants forecast in a batch."""
+    type: Literal["card", "sealed"]
+    id: int
+
+
+class BatchForecastRequest(BaseModel):
+    """POST /forecast/batch body. Server caps total ``items`` length."""
+    items: List[BatchForecastItem]
+
+
+class BatchForecastResultRow(BaseModel):
+    """Per-item result envelope inside a batch response.
+
+    ``forecast`` may be None when the item is missing, has no history, or
+    DeepSeek returned an error for THIS item — the batch never 500s on
+    one bad row, the row just carries ``error``.
+    """
+    type: Literal["card", "sealed"]
+    id: int
+    name: str = "(unknown)"
+    qty: int = 0
+    current_price: Optional[float] = None
+    forecast: Optional[ForecastResult] = None
+    error: Optional[str] = None
+
+
+class AggregateHorizon(BaseModel):
+    """Portfolio-wide projection for one time horizon.
+
+    Sum of (qty × horizon.low/target/high) across items whose forecast cleared
+    the confidence floor (0.3). Items below the floor contribute current_price
+    × qty in all three columns and count as skipped — keeps the totals honest
+    when the model wasn't sure.
+    """
+    days: int
+    current_total: float
+    projected_low: float
+    projected_target: float
+    projected_high: float
+    confidence_weighted_target: float
+    items_included: int
+    items_skipped: int
+
+
+class BatchForecastResponse(BaseModel):
+    """Wrapper around N item results + the portfolio roll-up."""
+    results: List[BatchForecastResultRow]
+    aggregate: List[AggregateHorizon]
+    duration_seconds: float
+    cache_hits: int
+    cache_misses: int
+    model: str
