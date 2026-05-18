@@ -5,6 +5,7 @@ import AddCardPage from './pages/AddCardPage';
 import CardDetailPage from './pages/CardDetailPage';
 import IdentifyPage from './pages/IdentifyPage';
 import SealedListPage from './pages/SealedListPage';
+import SealedDetailPage from './pages/SealedDetailPage';
 import AddSealedPage from './pages/AddSealedPage';
 import DashboardPage from './pages/DashboardPage';
 import PriceSnapshotPage from './pages/PriceSnapshotPage';
@@ -55,6 +56,11 @@ function App() {
             <Route path="/identify" element={<IdentifyPage />} />
             <Route path="/sealed" element={<SealedListPage />} />
             <Route path="/sealed/add" element={<AddSealedPage />} />
+            {/* Read-only detail mirrors /cards/:id — inline qty + notes editor,
+                Added on / Initial market / Since added gain-loss, sparkline,
+                history. Without this route a sealed tile click went to a
+                404 (only the /:id/edit form route existed). */}
+            <Route path="/sealed/:id" element={<SealedDetailPage />} />
             <Route path="/sealed/:id/edit" element={<AddSealedPage />} />
             <Route path="/sealed/edit/:id" element={<RedirectEdit basePath="/sealed" />} />
             <Route path="/snapshot" element={<PriceSnapshotPage />} />
