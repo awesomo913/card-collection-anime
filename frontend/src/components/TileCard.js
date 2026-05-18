@@ -18,6 +18,10 @@ const TileCard = ({ item, onDelete }) => {
   const editPath = `${detailPath}/edit`;
   const game = (item.game || '').toLowerCase();
   const price = item.current_price;
+  const qty = Number.isFinite(item.quantity) ? item.quantity : 1;
+  // Line total = unit price × quantity. Shown only when qty > 1 (otherwise it
+  // equals the current price and the extra row is noise).
+  const lineTotal = price != null ? price * qty : null;
   const priceSources = item.price_sources || {};
   const maxSourcePrice = Math.max(...Object.values(priceSources), 0.01);
 
@@ -49,6 +53,13 @@ const TileCard = ({ item, onDelete }) => {
       {/* Tile click opens read-only detail page. Wraps the title+image+price
           areas; Edit/Delete in the footer stay outside this Link so clicking
           them doesn't bubble to detail navigation. */}
+      {/* Quantity pill: visible at all times when qty > 1, top-right corner
+          of the tile so it's scannable on the grid without clicking in. */}
+      {qty > 1 && (
+        <div className="qty-pill" aria-label={`Quantity ${qty}`} title={`You have ${qty} of this card`}>
+          ×{qty}
+        </div>
+      )}
       <Link to={detailPath} className="tile-link">
         <header className="tile-header">
           <div className="tile-title">{item.name}</div>
@@ -69,9 +80,15 @@ const TileCard = ({ item, onDelete }) => {
           actions) sits OUTSIDE so they retain their own click semantics. */}
 
       <div className="tile-price">
-        <span className="label">Current</span>
+        <span className="label">{qty > 1 ? 'Per card' : 'Current'}</span>
         <span className="value">{price != null ? `$${price.toFixed(2)}` : 'N/A'}</span>
       </div>
+      {qty > 1 && lineTotal != null && (
+        <div className="tile-price tile-line-total">
+          <span className="label">×{qty} total</span>
+          <span className="value">${lineTotal.toFixed(2)}</span>
+        </div>
+      )}
 
       {Object.keys(priceSources).length > 0 && (
         <div className="price-sources">

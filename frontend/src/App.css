@@ -1173,3 +1173,53 @@ form button { margin-right: 10px; }
   font-weight: 400;
   font-size: 0.88rem;
 }
+
+/* ============================================================================
+ * Quantity display — qty pill on tile + line total + filter summary running totals
+ * ============================================================================ */
+
+/* Tile needs position:relative for the absolute-positioned pill. The existing
+   .anime-tile rule doesn't set it explicitly so we do it here. */
+.anime-tile { position: relative; }
+
+.qty-pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet, #b385ff));
+  color: #0a0a14;
+  font-weight: 800;
+  font-size: 0.95rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(0, 200, 255, 0.6);
+  pointer-events: none;  /* don't block the tile-link click underneath */
+}
+
+.tile-line-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255,255,255,0.12);
+}
+.tile-line-total .label {
+  color: var(--neon-cyan);
+  font-weight: 700;
+}
+.tile-line-total .value {
+  color: var(--neon-cyan);
+  font-weight: 800;
+  /* Drop any gradient text-fill the .value class might inherit so the total
+     reads cleanly on dark tiles. */
+  background: none;
+  -webkit-text-fill-color: var(--neon-cyan);
+}
+
+.filter-summary strong {
+  color: var(--text);
+  font-weight: 700;
+}
+.filter-summary-muted {
+  color: var(--text-mute);
+  font-size: 0.8rem;
+}

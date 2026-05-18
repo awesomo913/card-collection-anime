@@ -268,7 +268,37 @@ const CardListPage = () => {
         </div>
 
         <div className="filter-summary" aria-live="polite">
-          Showing {filtered.length} of {cards.length} cards
+          {(() => {
+            // Per-set summary: rows shown vs total, plus a quantity count and
+            // a price×qty total for whatever's currently visible. Helps the
+            // user see "Yu-Gi-Oh foils above $5" sum to a specific dollar
+            // amount without leaving the page.
+            const totalQty = filtered.reduce(
+              (sum, c) => sum + (Number.isFinite(c.quantity) ? c.quantity : 1), 0
+            );
+            const totalValue = filtered.reduce(
+              (sum, c) => sum + ((c.current_price || 0) * (Number.isFinite(c.quantity) ? c.quantity : 1)), 0
+            );
+            const collectionQty = cards.reduce(
+              (sum, c) => sum + (Number.isFinite(c.quantity) ? c.quantity : 1), 0
+            );
+            return (
+              <>
+                Showing <strong>{filtered.length}</strong> of {cards.length} entries
+                {totalQty !== filtered.length && (
+                  <> &nbsp;·&nbsp; <strong>{totalQty}</strong> total cards</>
+                )}
+                {totalValue > 0 && (
+                  <> &nbsp;·&nbsp; <strong>${totalValue.toFixed(2)}</strong> value</>
+                )}
+                {collectionQty !== totalQty && (
+                  <span className="filter-summary-muted">
+                    &nbsp;(collection: {collectionQty} cards)
+                  </span>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 

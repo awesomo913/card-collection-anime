@@ -141,11 +141,19 @@ const CardDetailPage = () => {
             </div>
           )}
           <div className="meta-row big">
-            <span className="label">Current value</span>
+            <span className="label">{(card.quantity || 1) > 1 ? 'Per card' : 'Current value'}</span>
             <span className="value">
               {card.current_price != null ? `$${card.current_price.toFixed(2)}` : 'N/A'}
             </span>
           </div>
+          {(card.quantity || 1) > 1 && card.current_price != null && (
+            <div className="meta-row big">
+              <span className="label">×{card.quantity} total</span>
+              <span className="value">
+                ${(card.current_price * card.quantity).toFixed(2)}
+              </span>
+            </div>
+          )}
           {card.notes && (
             <div className="meta-row notes">
               <span className="label">Notes</span>
