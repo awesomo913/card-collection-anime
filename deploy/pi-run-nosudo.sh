@@ -11,6 +11,24 @@ HOST="${HOST:-0.0.0.0}"
 log() { printf "\033[1;36m[run]\033[0m %s\n" "$*"; }
 
 cd "$ROOT"
+
+# --- Load secrets/config from ~/.bashrc when invoked non-interactively ---
+# Bashrc has an interactive-shell guard near the top (`case $- in *i*) ;; *) return;; esac`)
+# that no-ops `source ~/.bashrc` under setsid/nohup/systemd. To survive those launch
+# modes, extract whitelisted `export NAME=value` lines directly and eval them.
+# Whitelist (regex below) ensures we only pull known config vars — never aliases,
+# functions, PROMPT_COMMAND, or unrelated assignments.
+if [ -f "$HOME/.bashrc" ]; then
+  while IFS= read -r line; do
+    eval "$line" 2>/dev/null || true
+  done < <(grep -E '^[[:space:]]*export[[:space:]]+(DEEPSEEK_API_KEY|DEEPSEEK_MODEL|TCGPLAYER_API_KEY|IDENTIFY_WORKERS|PRICE_UPDATE_INTERVAL_HOURS|FORECAST_CACHE_TTL)=' "$HOME/.bashrc" 2>/dev/null)
+  if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+    log "loaded DEEPSEEK_API_KEY from ~/.bashrc"
+  else
+    log "WARNING: DEEPSEEK_API_KEY not found in ~/.bashrc — /forecast and /identify will return 503"
+  fi
+fi
+
 log "git pull"
 git pull --ff-only || true
 
