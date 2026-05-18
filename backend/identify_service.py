@@ -4,7 +4,8 @@ Concerns split:
 - ``providers/deepseek.py`` owns the HTTP transport to DeepSeek.
 - This module owns the prompt, the JSON shape we expect back, the validation +
   sanitisation of model output (clamping confidence, normalising game tag,
-  killing hallucinated URLs), and the batch fan-out semantics.
+  killing hallucinated URLs), the batch fan-out semantics, AND ffmpeg frame
+  extraction for the video endpoint (Phase 3).
 
 Why fan-out lives here, not in deepseek.py: parallelism is an app-level policy
 (how aggressive can we be without tripping DeepSeek's rate limits?) rather than
@@ -17,9 +18,13 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import schemas
@@ -237,6 +242,174 @@ def identify_single(
     )
     return schemas.IdentifyResult(
         source_filename=filename, candidates=candidates, error=None
+    )
+
+
+# ----- Video frame extraction (Phase 3) ------------------------------------
+#
+# DeepSeek's hosted API doesn't accept video. We extract evenly-spaced JPEG
+# frames with ffmpeg and send all of them in ONE multi-image call so the model
+# can reason across the whole clip ("which cards appeared during the flip").
+#
+# Why one call instead of N parallel single-image calls:
+#   - Cards repeat across adjacent frames; one call with 8 images dedups for
+#     us in the model's attention rather than us having to merge N noisy
+#     responses afterwards.
+#   - Single API charge, less rate-limit pressure.
+#
+# Why server-side ffmpeg instead of browser canvas:
+#   - Pi has the horsepower (Pi 5 16GB) and is always available; user devices
+#     vary wildly (low-end phones would choke on a 4K binder-flip clip).
+#   - Uploads stay small (one video file) instead of N HTTP requests with
+#     base64 frame payloads.
+# ---------------------------------------------------------------------------
+
+MAX_VIDEO_FRAMES = 8
+VIDEO_FRAME_FPS = 0.5  # 1 frame every 2 seconds
+
+
+def find_ffmpeg() -> Optional[str]:
+    """Locate ffmpeg. Checks PATH first, then ~/.local/bin (Pi user-space install)."""
+    on_path = shutil.which("ffmpeg")
+    if on_path:
+        return on_path
+    home_bin = Path.home() / ".local" / "bin" / "ffmpeg"
+    if home_bin.is_file() and os.access(home_bin, os.X_OK):
+        return str(home_bin)
+    return None
+
+
+def extract_video_frames(
+    video_bytes: bytes,
+    *,
+    max_frames: int = MAX_VIDEO_FRAMES,
+    fps: float = VIDEO_FRAME_FPS,
+    ffmpeg_path: Optional[str] = None,
+) -> List[Tuple[bytes, str]]:
+    """Write video to a temp file, run ffmpeg, return list of (frame_bytes, mime).
+
+    Returns up to ``max_frames`` JPEG frames sampled at ``fps`` frames/sec.
+    Tempfiles are cleaned up before the function returns — no leftover bytes
+    on the Pi's disk. Raises RuntimeError when ffmpeg is missing or fails;
+    callers (the /identify/video endpoint) translate to a per-image error.
+    """
+    binary = ffmpeg_path or find_ffmpeg()
+    if not binary:
+        raise RuntimeError(
+            "ffmpeg not found. Install via apt or re-run "
+            "deploy/pi-run-nosudo.sh to fetch the static aarch64 build."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="identify_video_") as tmp:
+        tmp_path = Path(tmp)
+        video_path = tmp_path / "input"
+        video_path.write_bytes(video_bytes)
+
+        # -vf fps=<n>  → emit a frame every 1/n seconds
+        # -frames:v N  → hard cap at N output frames
+        # -q:v 4       → mid-quality JPEG; small files but still readable by the model
+        # -nostats -loglevel error → keep stderr quiet so failures don't drown logs
+        cmd = [
+            binary, "-y", "-i", str(video_path),
+            "-vf", f"fps={fps}",
+            "-frames:v", str(max_frames),
+            "-q:v", "4",
+            str(tmp_path / "frame_%02d.jpg"),
+            "-nostats", "-loglevel", "error",
+        ]
+        logger.info(
+            "ffmpeg frame extraction: input_bytes=%s fps=%s max_frames=%s",
+            len(video_bytes), fps, max_frames,
+        )
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, timeout=60, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("ffmpeg timed out after 60s")
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"ffmpeg failed (rc={proc.returncode}): {stderr}")
+
+        frames: List[Tuple[bytes, str]] = []
+        for frame_file in sorted(tmp_path.glob("frame_*.jpg")):
+            frames.append((frame_file.read_bytes(), "image/jpeg"))
+        if not frames:
+            raise RuntimeError(
+                "ffmpeg produced no frames. Is the upload a valid video file?"
+            )
+        logger.info("ffmpeg extracted %s frames", len(frames))
+        return frames
+
+
+def identify_video(
+    client: DeepSeekVision,
+    filename: str,
+    video_bytes: bytes,
+    game_hint: Optional[str] = None,
+    *,
+    extractor=None,  # injectable for tests; default = extract_video_frames
+) -> schemas.IdentifyResult:
+    """Extract frames from a video then send them all to DeepSeek in one call.
+
+    Returns a single IdentifyResult with candidates deduped across frames
+    (highest-confidence wins per (game, name) pair). Errors during ffmpeg
+    are surfaced on the ``error`` field so the UI shows a per-clip message
+    rather than a generic 500.
+    """
+    started = time.monotonic()
+    extract = extractor or extract_video_frames
+    try:
+        frames = extract(video_bytes)
+    except RuntimeError as exc:
+        logger.warning("video extract failed file=%s: %s", filename, exc)
+        return schemas.IdentifyResult(
+            source_filename=filename, candidates=[], error=str(exc),
+        )
+
+    try:
+        result = client.identify(
+            images=frames,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=(
+                build_user_prompt(game_hint)
+                + "\n\nThis is a SEQUENCE OF FRAMES from a short video showing "
+                  "one or more cards in motion (binder flip / pile pan / shelf "
+                  "pan). Identify the most prominent card visible across the "
+                  "sequence — if the camera shows multiple distinct cards, "
+                  "list each as a separate candidate."
+            ),
+        )
+    except DeepSeekVisionError as exc:
+        logger.warning("identify_video deepseek failed file=%s: %s", filename, exc)
+        return schemas.IdentifyResult(
+            source_filename=filename, candidates=[], error=str(exc),
+        )
+
+    try:
+        candidates = _parse_model_output(result.raw_content)
+    except ValueError as exc:
+        return schemas.IdentifyResult(
+            source_filename=filename, candidates=[],
+            error=f"Model output unparseable: {exc}",
+        )
+
+    # Dedup: keep highest-confidence per (game, name) tuple. Stable order:
+    # iterating candidates in confidence-desc means the first seen wins.
+    deduped: Dict[Tuple[str, str], schemas.IdentifyCandidate] = {}
+    for cand in candidates:
+        key = (cand.game, cand.name.lower())
+        if key not in deduped:
+            deduped[key] = cand
+    final = list(deduped.values())[:3]
+
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    logger.info(
+        "identify_video ok file=%s frames=%s candidates=%s ms=%.0f",
+        filename, len(frames), len(final), elapsed_ms,
+    )
+    return schemas.IdentifyResult(
+        source_filename=filename, candidates=final, error=None,
     )
 
 

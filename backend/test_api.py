@@ -866,14 +866,73 @@ def test_identify_batch_partial_failure(client, monkeypatch):
     assert all(s["candidates"] for s in successes)
 
 
-def test_identify_video_returns_501(client, monkeypatch):
-    """Phase 1 ships a 501 stub; Phase 3 will replace it."""
+def test_identify_video_ok_with_mocked_ffmpeg(client, monkeypatch):
+    """Phase 3: ffmpeg extraction is injected; DeepSeek returns 2 unique cards."""
+    _patch_deepseek(monkeypatch, json.dumps({
+        "candidates": [
+            {"game": "yugioh", "name": "Dark Magician", "confidence": 0.9,
+             "search_queries": ["dark magician"]},
+            {"game": "yugioh", "name": "Dark Magician", "confidence": 0.7,
+             "search_queries": ["dark magician alt"]},  # dup name → dedup
+            {"game": "yugioh", "name": "Blue-Eyes White Dragon",
+             "confidence": 0.85, "search_queries": ["blue eyes"]},
+        ]
+    }))
+
+    # Replace extract_video_frames with a fake that returns 3 byte blobs.
+    # The endpoint passes our injected extractor straight through to
+    # identify_video — see identify_service.identify_video(extractor=...).
+    import identify_service
+    fake_frames = [
+        (b"\xff\xd8\xff frame1", "image/jpeg"),
+        (b"\xff\xd8\xff frame2", "image/jpeg"),
+        (b"\xff\xd8\xff frame3", "image/jpeg"),
+    ]
+    monkeypatch.setattr(
+        identify_service, "extract_video_frames",
+        lambda video_bytes, **kw: fake_frames,
+    )
+
+    res = client.post("/identify/video", files={
+        "file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42whatever", "video/mp4"),
+    })
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["error"] is None
+    names = [c["name"] for c in body["candidates"]]
+    # Deduplicated: Dark Magician should appear once even though model returned twice.
+    assert names.count("Dark Magician") == 1
+    assert "Blue-Eyes White Dragon" in names
+
+
+def test_identify_video_ffmpeg_missing(client, monkeypatch):
+    """When ffmpeg can't run, /identify/video returns a 200 with an error field
+    (per-clip failure, not a server error)."""
     _patch_deepseek(monkeypatch, "{}")
+    import identify_service
+
+    def broken_extract(video_bytes, **kw):
+        raise RuntimeError("ffmpeg not found (test simulation)")
+
+    monkeypatch.setattr(identify_service, "extract_video_frames", broken_extract)
+
     res = client.post("/identify/video", files={
         "file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4"),
     })
-    assert res.status_code == 501
-    assert "Phase 3" in res.json()["detail"]
+    assert res.status_code == 200
+    body = res.json()
+    assert body["candidates"] == []
+    assert body["error"] and "ffmpeg" in body["error"].lower()
+
+
+def test_identify_video_rejects_non_video_mime(client, monkeypatch):
+    """An image accidentally posted to /identify/video → 415, no extract call."""
+    _patch_deepseek(monkeypatch, "{}")
+    res = client.post("/identify/video", files={
+        "file": ("oops.jpg", b"\xff\xd8\xff", "image/jpeg"),
+    })
+    assert res.status_code == 415
+    assert "Unsupported" in res.json()["detail"]
 
 
 def test_profile_export_import_roundtrip(client):

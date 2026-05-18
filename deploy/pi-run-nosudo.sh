@@ -26,6 +26,49 @@ fi
 log "ensuring backend deps"
 backend/venv/bin/pip install --quiet -r backend/requirements.txt
 
+# --- ffmpeg (user-space static build for /identify/video frame extraction) ---
+# Pi OS Bookworm has ffmpeg in apt, but we run without sudo. John Van Sickle's
+# static aarch64 build drops a single binary into ~/.local/bin/ — no root,
+# no shared-lib install. Skip download if a system-wide ffmpeg already exists
+# (e.g., the user installed it with sudo separately).
+LOCAL_BIN="$HOME/.local/bin"
+export PATH="$LOCAL_BIN:$PATH"
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  if [ ! -x "$LOCAL_BIN/ffmpeg" ]; then
+    log "installing static ffmpeg (~50MB, one-time) for video identify"
+    mkdir -p "$LOCAL_BIN"
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+      aarch64|arm64) FFMPEG_ASSET="ffmpeg-release-arm64-static.tar.xz" ;;
+      x86_64)        FFMPEG_ASSET="ffmpeg-release-amd64-static.tar.xz" ;;
+      *) echo "unsupported arch for ffmpeg static build: $ARCH"; FFMPEG_ASSET="" ;;
+    esac
+    if [ -n "$FFMPEG_ASSET" ]; then
+      TMP="$(mktemp -d)"
+      if curl -fsSL -o "$TMP/ffmpeg.tar.xz" \
+          "https://johnvansickle.com/ffmpeg/releases/${FFMPEG_ASSET}"; then
+        tar -xJf "$TMP/ffmpeg.tar.xz" -C "$TMP" --strip-components=1 \
+            --wildcards '*/ffmpeg' 2>/dev/null || true
+        if [ -f "$TMP/ffmpeg" ]; then
+          mv "$TMP/ffmpeg" "$LOCAL_BIN/ffmpeg"
+          chmod +x "$LOCAL_BIN/ffmpeg"
+          log "ffmpeg installed at $LOCAL_BIN/ffmpeg"
+        else
+          log "ffmpeg extraction failed; video identify will return an error"
+        fi
+        rm -rf "$TMP"
+      else
+        log "ffmpeg download failed; video identify will return an error"
+      fi
+    fi
+  fi
+fi
+if command -v ffmpeg >/dev/null 2>&1; then
+  log "ffmpeg available: $(command -v ffmpeg)"
+else
+  log "WARNING: ffmpeg unavailable — /identify/video will return error per-call"
+fi
+
 # --- Apply pending Alembic migrations (idempotent: no-op if already at head) ---
 log "alembic upgrade head"
 (cd backend && "$ROOT/backend/venv/bin/alembic" upgrade head) || \

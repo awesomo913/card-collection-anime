@@ -430,14 +430,41 @@ async def identify_batch(
 
 
 @app.post("/identify/video", response_model=schemas.IdentifyResult)
-async def identify_video(file: UploadFile = File(...)):
-    """Phase 3 placeholder. Returns 501 until ffmpeg frame extraction lands."""
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Video identification is not implemented yet (Phase 3). "
-            "Upload individual frames via /identify/image for now."
-        ),
+async def identify_video(
+    file: UploadFile = File(...),
+    game_hint: Optional[str] = None,
+):
+    """Identify cards visible in a short video (binder flip / pile pan / shelf).
+
+    Server-side ffmpeg extracts up to 8 frames (1 every 2s) from the upload,
+    sends them all to DeepSeek in a single multi-image call, then dedups
+    candidates across frames. Returns one IdentifyResult.
+    """
+    mime = (file.content_type or "").lower()
+    if mime not in _VIDEO_MIME_ALLOWLIST:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported video type {mime!r}. "
+                f"Allowed: {sorted(_VIDEO_MIME_ALLOWLIST)}"
+            ),
+        )
+    body = await file.read()
+    if len(body) > _MAX_VIDEO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Video is {len(body)} bytes; cap is {_MAX_VIDEO_BYTES} bytes "
+                f"(~{_MAX_VIDEO_BYTES // (1024*1024)} MB). Trim or compress."
+            ),
+        )
+    client = _require_deepseek_client()
+    logger.info(
+        "identify/video filename=%s bytes=%s mime=%s hint=%s",
+        file.filename, len(body), mime, game_hint,
+    )
+    return identify_service.identify_video(
+        client, file.filename or "video", body, game_hint=game_hint,
     )
 
 
