@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-ro
 import CardListPage from './pages/CardListPage';
 import AddCardPage from './pages/AddCardPage';
 import CardDetailPage from './pages/CardDetailPage';
+import IdentifyPage from './pages/IdentifyPage';
 import SealedListPage from './pages/SealedListPage';
 import AddSealedPage from './pages/AddSealedPage';
 import DashboardPage from './pages/DashboardPage';
@@ -33,6 +34,7 @@ function App() {
               <li><Link to="/">Dashboard</Link></li>
               <li><Link to="/cards">My Cards</Link></li>
               <li><Link to="/sealed">Sealed Products</Link></li>
+              <li><Link to="/identify">Identify</Link></li>
               <li><Link to="/snapshot">Price Snapshot</Link></li>
               <li><Link to="/settings">Backup</Link></li>
               <li><Link to="/status">Status</Link></li>
@@ -49,6 +51,8 @@ function App() {
             <Route path="/cards/:id/edit" element={<AddCardPage />} />
             {/* Legacy alias kept for any old bookmarks. */}
             <Route path="/cards/edit/:id" element={<RedirectEdit basePath="/cards" />} />
+            {/* DeepSeek multimodal: drop photos → ranked candidates → existing resolver. */}
+            <Route path="/identify" element={<IdentifyPage />} />
             <Route path="/sealed" element={<SealedListPage />} />
             <Route path="/sealed/add" element={<AddSealedPage />} />
             <Route path="/sealed/:id/edit" element={<AddSealedPage />} />

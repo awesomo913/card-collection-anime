@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import CatalogSearch from '../components/CatalogSearch';
+import IdentifyDropZone from '../components/IdentifyDropZone';
 import { CONDITIONS, RARITIES_BY_GAME } from '../data/options';
 
 const EMPTY_CARD = {
@@ -185,6 +186,20 @@ const AddCardPage = () => {
             Search picks the exact product so future price refreshes stay accurate.
             You can also fill the form manually below.
           </p>
+          {/* Identify-from-photo path. Auto-pick fires CatalogSearch's
+              `catalog-search-prefill` event with the top candidate's TCGplayer
+              URL — same plumbing as the "📋 Paste URL" button above, so the
+              existing resolver handles save + canonical pricing. */}
+          <details className="identify-inline">
+            <summary>or 📷 identify from a photo</summary>
+            <IdentifyDropZone
+              mode="single"
+              gameHint={card.game}
+              onAutoPick={(url) => {
+                window.dispatchEvent(new CustomEvent('catalog-search-prefill', { detail: url }));
+              }}
+            />
+          </details>
         </div>
       )}
 

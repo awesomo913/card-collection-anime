@@ -1352,3 +1352,159 @@ form button { margin-right: 10px; }
   font-size: 0.85rem;
   opacity: 0.7;
 }
+
+/* ============================================================================
+ * /identify — DeepSeek multimodal drop zone + batch review page
+ * ============================================================================ */
+
+.identify-drop-zone-host { margin: 12px 0; }
+
+.identify-drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 28px 18px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: rgba(0, 0, 0, 0.2);
+}
+.identify-drop-zone:hover,
+.identify-drop-zone:focus-visible {
+  border-color: var(--neon-cyan);
+  background: rgba(0, 200, 255, 0.06);
+  outline: none;
+}
+.identify-drop-zone.drag-over {
+  border-color: var(--neon-cyan);
+  background: rgba(0, 200, 255, 0.15);
+  transform: scale(1.01);
+}
+.identify-drop-zone.busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+.identify-drop-zone .dz-icon {
+  font-size: 2.4rem;
+  margin-bottom: 8px;
+}
+.identify-drop-zone .dz-text {
+  font-size: 1rem;
+  color: var(--text);
+}
+.identify-drop-zone .dz-link {
+  color: var(--neon-cyan);
+  text-decoration: underline;
+}
+.identify-drop-zone .dz-hint {
+  font-size: 0.78rem;
+  color: var(--text-mute);
+  margin-top: 10px;
+}
+
+/* Per-item thumbnails after a batch. */
+.identify-thumb-grid {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.identify-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.identify-thumb img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+.identify-thumb .thumb-meta { padding: 8px 10px; font-size: 0.85rem; }
+.identify-thumb .thumb-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-mute);
+}
+.identify-thumb.status-queued .thumb-status { color: var(--text-mute); }
+.identify-thumb.status-running .thumb-status { color: var(--neon-gold, #ffc828); }
+.identify-thumb.status-done .thumb-status { color: var(--neon-cyan); }
+.identify-thumb.status-error .thumb-status { color: var(--neon-red, #ff3c50); }
+.identify-thumb .thumb-name { font-weight: 700; margin-top: 2px; }
+.identify-thumb .thumb-sub { color: var(--text-mute); font-size: 0.78rem; }
+.identify-thumb .thumb-error { color: var(--neon-red, #ff3c50); font-size: 0.78rem; margin-top: 4px; }
+
+/* /identify page wrapper + review cards */
+.identify-page { max-width: 980px; }
+.identify-summary { margin: 18px 0 8px; }
+.identify-results { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.identify-result-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.identify-result-card[data-game="magic"]   { border-left-color: var(--neon-violet, #b385ff); }
+.identify-result-card[data-game="pokemon"] { border-left-color: var(--neon-gold, #ffc828); }
+.identify-result-card[data-game="yugioh"]  { border-left-color: var(--neon-red, #ff3c50); }
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.result-filename { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text-mute); }
+.dismiss { font-size: 0.8rem; }
+.candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+.candidate.primary { padding-top: 0; }
+.candidate-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+}
+.candidate-name { font-weight: 700; flex: 1; }
+.candidate-conf {
+  background: rgba(0, 200, 255, 0.15);
+  color: var(--neon-cyan);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.candidate-set { color: var(--text-mute); font-size: 0.85rem; }
+.candidate-notes { font-size: 0.85rem; }
+.candidate-just { font-style: italic; font-size: 0.82rem; }
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.candidate-actions button {
+  font-size: 0.85rem;
+  padding: 6px 12px;
+}
+.more-candidates summary {
+  cursor: pointer;
+  color: var(--neon-cyan);
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+.identify-inline summary {
+  cursor: pointer;
+  color: var(--neon-cyan);
+  margin: 6px 0;
+  font-size: 0.9rem;
+}

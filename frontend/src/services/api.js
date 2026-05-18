@@ -47,6 +47,37 @@ export const exportProfile = (password) =>
 export const importProfile = (encrypted, password, replace = true) =>
   api.post('/profile/import', { encrypted, password, replace });
 
+// DeepSeek multimodal identification (server proxy — key never in browser).
+export const identifyImage = (file, gameHint) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  const params = gameHint ? { game_hint: gameHint } : {};
+  return api.post('/identify/image', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    params,
+    // DeepSeek can take 10-30s per image; default axios timeout is too tight.
+    timeout: 90000,
+  });
+};
+export const identifyBatch = (files) => {
+  const fd = new FormData();
+  Array.from(files).forEach((f) => fd.append('files', f));
+  return api.post('/identify/batch', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    // Batch is parallel on the server but with N items the wall-clock can
+    // still grow. Allow 3 min for a 30-image drop.
+    timeout: 180000,
+  });
+};
+export const identifyVideo = (file) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  return api.post('/identify/video', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+  });
+};
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
@@ -54,6 +85,7 @@ const apiClient = {
   searchCatalog, resolveCatalogUrl,
   exportProfile, importProfile,
   getStatus, getStatusLogs,
+  identifyImage, identifyBatch, identifyVideo,
 };
 
 export default apiClient;
