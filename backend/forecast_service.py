@@ -465,7 +465,7 @@ def forecast_item(
 
     started = time.monotonic()
     try:
-        ds_result = client.chat_json(SYSTEM_PROMPT, user_prompt, max_tokens=1500)
+        ds_result = client.chat_json(SYSTEM_PROMPT, user_prompt, max_tokens=2500)
     except DeepSeekVisionError as exc:
         logger.warning("forecast deepseek failed item=%s/%s: %s", item_type, item.id, exc)
         # Return an empty-horizon result with the error surfaced in caveats so
