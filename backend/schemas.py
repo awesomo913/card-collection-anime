@@ -19,6 +19,9 @@ class CardBase(BaseModel):
     external_id: Optional[str] = None
     image_url: Optional[str] = None
     tcgplayer_product_id: Optional[str] = None
+    # Market price snapshot at acquisition (auto-set by create; user can override
+    # via PATCH if they had a different starting baseline in mind).
+    acquired_price: Optional[float] = None
 
 class CardCreate(CardBase):
     pass
@@ -40,12 +43,14 @@ class CardUpdate(BaseModel):
     external_id: Optional[str] = None
     image_url: Optional[str] = None
     tcgplayer_product_id: Optional[str] = None
+    acquired_price: Optional[float] = None
 
 class Card(CardBase):
     id: int
     current_price: Optional[float] = None
     price_sources: Optional[Dict[str, float]] = None
     last_updated: datetime
+    created_at: Optional[datetime] = None
     image_url: Optional[str] = None
     external_source: Optional[str] = None
     external_id: Optional[str] = None
@@ -64,6 +69,7 @@ class SealedProductBase(BaseModel):
     external_id: Optional[str] = None
     image_url: Optional[str] = None
     tcgplayer_product_id: Optional[str] = None
+    acquired_price: Optional[float] = None
 
 class SealedProductCreate(SealedProductBase):
     pass
@@ -81,12 +87,14 @@ class SealedProductUpdate(BaseModel):
     external_id: Optional[str] = None
     image_url: Optional[str] = None
     tcgplayer_product_id: Optional[str] = None
+    acquired_price: Optional[float] = None
 
 class SealedProduct(SealedProductBase):
     id: int
     current_price: Optional[float] = None
     price_sources: Optional[Dict[str, float]] = None
     last_updated: datetime
+    created_at: Optional[datetime] = None
     image_url: Optional[str] = None
     external_source: Optional[str] = None
     external_id: Optional[str] = None

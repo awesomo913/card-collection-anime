@@ -1223,3 +1223,132 @@ form button { margin-right: 10px; }
   color: var(--text-mute);
   font-size: 0.8rem;
 }
+
+/* ============================================================================
+ * Detail page inline editor + gain/loss colors + qty stepper
+ * ============================================================================ */
+
+.save-indicator {
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  margin-right: 6px;
+}
+.save-indicator.saved {
+  color: var(--neon-cyan);
+  background: rgba(0, 200, 255, 0.12);
+}
+.save-indicator.error {
+  color: var(--neon-red, #ff3c50);
+  background: rgba(255, 60, 80, 0.15);
+}
+
+/* -- Inline editor inputs -- */
+.inline-input {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: inherit;
+  width: 100%;
+  max-width: 220px;
+}
+.inline-input:focus {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+  border-color: var(--neon-cyan);
+}
+.money-input {
+  max-width: 110px;
+  text-align: right;
+}
+.dollar-prefix {
+  color: var(--text-mute);
+  margin-right: 4px;
+}
+.inline-textarea {
+  width: 100%;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+}
+.inline-textarea:focus {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+.meta-row.inline-editable .label {
+  padding-top: 8px;  /* align label with the input vertical center */
+}
+
+/* -- Quantity stepper -- */
+.qty-row span:nth-child(2) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.qty-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: rgba(0, 200, 255, 0.15);
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.qty-btn:hover:not(:disabled) {
+  background: rgba(0, 200, 255, 0.3);
+}
+.qty-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.qty-input {
+  width: 64px;
+  height: 36px;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 700;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+}
+.qty-input:focus {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 1px;
+}
+
+/* -- Gain/loss visual -- */
+.meta-row.gain.positive .value {
+  color: #4ade80;  /* tailwind green-400 */
+  background: none;
+  -webkit-text-fill-color: #4ade80;
+}
+.meta-row.gain.negative .value {
+  color: var(--neon-red, #ff3c50);
+  background: none;
+  -webkit-text-fill-color: var(--neon-red, #ff3c50);
+}
+.gain-total {
+  font-weight: 400;
+  font-size: 0.92rem;
+  opacity: 0.85;
+}
+.gain-pct {
+  font-weight: 400;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}

@@ -67,7 +67,57 @@ def _self_heal_schema() -> None:
                     status_module.record_schema_warning(msg)
 
 
+def _backfill_known_columns() -> None:
+    """One-shot column-specific backfill after self-heal ALTER TABLE.
+
+    When a new nullable column lands, existing rows get NULL by default —
+    SQLite's ALTER TABLE ADD COLUMN doesn't apply ``server_default`` to the
+    rows that pre-date the column. For a handful of columns that have a
+    sensible historical fallback (created_at from last_updated, acquired_price
+    from current_price), we backfill explicitly so the UI doesn't show empty
+    "Added on" or "Initial price" fields for cards that pre-date the feature.
+
+    Per-column rule:
+    - ``created_at``  → COALESCE with ``last_updated`` (best approximation).
+    - ``acquired_price`` → COALESCE with ``current_price`` (best approximation).
+
+    All updates are idempotent: WHERE clause filters to NULL-only rows so a
+    re-run is a no-op.
+    """
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    targets = [
+        # (table, column, source-column-to-copy-from)
+        ("cards", "created_at", "last_updated"),
+        ("sealed_products", "created_at", "last_updated"),
+        ("cards", "acquired_price", "current_price"),
+        ("sealed_products", "acquired_price", "current_price"),
+    ]
+    with engine.begin() as conn:
+        for table, col, source in targets:
+            if table not in existing_tables:
+                continue
+            live_cols = {c["name"] for c in insp.get_columns(table)}
+            if col not in live_cols or source not in live_cols:
+                continue
+            try:
+                # Quote identifiers for safety; values are not user-supplied.
+                stmt = (
+                    f'UPDATE "{table}" SET "{col}" = "{source}" '
+                    f'WHERE "{col}" IS NULL'
+                )
+                result = conn.execute(text(stmt))
+                if result.rowcount:
+                    logger.info(
+                        "backfilled %s.%s from %s for %s rows",
+                        table, col, source, result.rowcount,
+                    )
+            except Exception as exc:  # noqa: BLE001 — backfill is best-effort
+                logger.error("Backfill failed for %s.%s: %s", table, col, exc)
+
+
 _self_heal_schema()
+_backfill_known_columns()
 models.Base.metadata.create_all(bind=engine)
 
 

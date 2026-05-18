@@ -28,6 +28,13 @@ def create_card(db: Session, card: schemas.CardCreate):
     db_card.current_price = (
         round(sum(sources.values()) / len(sources), 2) if sources else None
     )
+    # Snapshot the market price AT THE TIME the user added this card. Future
+    # refreshes will move current_price up/down but acquired_price stays put
+    # so we can show "+$3.40 since you added" gains/losses on the detail page.
+    # User can override via PATCH if they want to set a different baseline
+    # (e.g., they're entering a card they bought a year ago at a known price).
+    if db_card.acquired_price is None:
+        db_card.acquired_price = db_card.current_price
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
@@ -88,6 +95,8 @@ def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
     db_sealed.current_price = (
         round(sum(sources.values()) / len(sources), 2) if sources else None
     )
+    if db_sealed.acquired_price is None:
+        db_sealed.acquired_price = db_sealed.current_price
     db.add(db_sealed)
     db.commit()
     db.refresh(db_sealed)

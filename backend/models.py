@@ -16,6 +16,16 @@ class Card(Base):
     current_price = Column(Float, nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
     last_price_update = Column(DateTime(timezone=True), server_default=func.now())
+    # When this card was first added to the collection. Set by server_default on
+    # INSERT; never updated. For rows that existed before this column was added,
+    # the boot-time backfill copies ``last_updated`` into it (best approximation).
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    # Market price snapshot AT THE TIME the card was added — separate from
+    # purchase_price (which is what the user paid). Lets you see "I added this
+    # when it was worth $X, now it's worth $Y" for gain/loss tracking. Set by
+    # crud.create_card after the initial price fetch. Backfilled to current_price
+    # for any existing row (best approximation).
+    acquired_price = Column(Float, nullable=True)
     is_foil = Column(Boolean, default=False)
     is_signed = Column(Boolean, default=False)
     game = Column(String)  # magic, pokemon, yugioh
@@ -44,6 +54,8 @@ class SealedProduct(Base):
     current_price = Column(Float, nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
     last_price_update = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    acquired_price = Column(Float, nullable=True)
     game = Column(String)  # magic, pokemon, yugioh
     notes = Column(String, nullable=True)
     price_sources = Column(JSON, nullable=True)
