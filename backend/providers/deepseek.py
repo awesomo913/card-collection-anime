@@ -192,3 +192,71 @@ class DeepSeekVision:
             prompt_tokens=int(usage.get("prompt_tokens") or 0),
             completion_tokens=int(usage.get("completion_tokens") or 0),
         )
+
+    def chat_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_tokens: int = 800,
+        temperature: float = 0.3,
+    ) -> DeepSeekResult:
+        """Text-only chat with strict JSON output mode.
+
+        Used by the forecast endpoint (no images, just card data → price
+        projection JSON). Shares auth + endpoint + retry plumbing with
+        ``identify()``. Same DeepSeekVisionError on failure so callers handle
+        one exception type for both code paths.
+        """
+        if not self.api_key:
+            raise DeepSeekVisionError(
+                "DEEPSEEK_API_KEY env var not set."
+            )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        logger.info(
+            "deepseek chat_json request model=%s prompt_chars=%s",
+            self.model, len(user_prompt),
+        )
+        resp = request_with_backoff(
+            "POST",
+            DEEPSEEK_CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=self.timeout,
+        )
+        if resp is None:
+            raise DeepSeekVisionError("DeepSeek API unreachable after retries")
+        if resp.status_code >= 400:
+            logger.error(
+                "deepseek chat_json %s response: %s",
+                resp.status_code, resp.text[:500],
+            )
+            raise DeepSeekVisionError(
+                f"DeepSeek returned HTTP {resp.status_code}"
+            )
+        try:
+            body = resp.json()
+            raw_content = body["choices"][0]["message"]["content"]
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            raise DeepSeekVisionError(
+                f"DeepSeek chat_json response malformed: {exc}"
+            ) from exc
+        usage = body.get("usage") or {}
+        return DeepSeekResult(
+            raw_content=raw_content,
+            model=body.get("model") or self.model,
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+        )

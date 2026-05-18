@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import Sparkline from '../components/Sparkline';
+import ForecastPanel from '../components/ForecastPanel';
 import { PRODUCT_TYPES_BY_GAME } from '../data/options';
 
 /* --------------------------------------------------------------------------
@@ -336,6 +337,8 @@ const SealedDetailPage = () => {
           <Sparkline points={series} stroke={SOURCE_COLORS.TCGPlayer} />
         </div>
       )}
+
+      <ForecastPanel itemType="sealed" itemId={item.id} />
 
       {item.price_sources && Object.keys(item.price_sources).length > 0 && (
         <div className="detail-sources">

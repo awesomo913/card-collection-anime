@@ -163,3 +163,38 @@ class IdentifyBatchResponse(BaseModel):
     """Wrapper around N IdentifyResults plus the total wall-clock duration."""
     results: List[IdentifyResult]
     duration_seconds: float
+
+
+# ----- /forecast endpoints (DeepSeek text-only) ----------------------------
+# Speculative projections from an LLM given price history + metadata. Not
+# investment advice — the frontend renders a prominent disclaimer.
+
+class ForecastHorizon(BaseModel):
+    """One time-horizon projection (typically 7d / 30d / 90d returned together).
+
+    ``target`` is the model's point estimate; ``low``/``high`` bracket the
+    plausible range. ``confidence`` is the model's own self-rated confidence
+    (0..1) — useful as a tiebreaker, not as a hard probability.
+    """
+    days: int = Field(ge=1, le=730)
+    low: float = Field(ge=0)
+    high: float = Field(ge=0)
+    target: float = Field(ge=0)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class ForecastResult(BaseModel):
+    """Per-item forecast envelope. Cached server-side; resends on data change."""
+    item_type: Literal["card", "sealed"]
+    item_id: int
+    item_name: str
+    current_price: Optional[float] = None
+    horizons: List[ForecastHorizon] = []
+    direction: Literal["up", "down", "flat", "unknown"] = "unknown"
+    reasoning: str = ""
+    drivers: List[str] = []
+    caveats: List[str] = []
+    generated_at: datetime
+    model: str
+    history_samples_used: int = 0
+    cached: bool = False  # True when served from in-memory cache

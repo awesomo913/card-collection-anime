@@ -14,6 +14,7 @@ from price_service import update_all_prices
 from providers import catalog as catalog_module
 from providers.deepseek import DeepSeekVision
 import identify_service
+import forecast_service
 import profile_backup
 import status as status_module
 from scheduler import start_scheduler
@@ -466,6 +467,45 @@ async def identify_video(
     return identify_service.identify_video(
         client, file.filename or "video", body, game_hint=game_hint,
     )
+
+
+# ============================================================================
+# /forecast — DeepSeek-powered short-term price projection
+#
+# Per-item, on-demand from the detail page. Server caches results for 24h
+# (also invalidated automatically when a new PriceHistory row lands — see
+# forecast_service._cache_key). Cost-conscious: a 100-card collection that
+# the user spot-checks daily costs ~$0.20/month at deepseek-v4-pro pricing.
+# ============================================================================
+
+def _fetch_item_and_history(
+    db: Session, item_type: str, item_id: int,
+) -> tuple[models.Card | models.SealedProduct, list[models.PriceHistory]]:
+    """Load the item + its price history. Raises 404 when missing."""
+    if item_type == "card":
+        item = db.query(models.Card).filter(models.Card.id == item_id).first()
+    else:
+        item = db.query(models.SealedProduct).filter(models.SealedProduct.id == item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"{item_type} {item_id} not found")
+    history = crud.get_price_history_for_item(db, item_type, item_id)
+    return item, history
+
+
+@app.get("/forecast/card/{card_id}", response_model=schemas.ForecastResult)
+def forecast_card(card_id: int, db: Session = Depends(get_db)):
+    """Speculative price projection for a single card. Cached 24h server-side."""
+    client = _require_deepseek_client()
+    item, history = _fetch_item_and_history(db, "card", card_id)
+    return forecast_service.forecast_item(client, "card", item, history)
+
+
+@app.get("/forecast/sealed/{sealed_id}", response_model=schemas.ForecastResult)
+def forecast_sealed(sealed_id: int, db: Session = Depends(get_db)):
+    """Speculative price projection for a sealed product. Cached 24h server-side."""
+    client = _require_deepseek_client()
+    item, history = _fetch_item_and_history(db, "sealed", sealed_id)
+    return forecast_service.forecast_item(client, "sealed", item, history)
 
 
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])

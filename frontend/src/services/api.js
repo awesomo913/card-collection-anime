@@ -78,6 +78,12 @@ export const identifyVideo = (file) => {
   });
 };
 
+// DeepSeek-powered price forecasting. Server caches results 24h.
+export const forecastCard = (id) =>
+  api.get(`/forecast/card/${id}`, { timeout: 60000 });
+export const forecastSealed = (id) =>
+  api.get(`/forecast/sealed/${id}`, { timeout: 60000 });
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
@@ -86,6 +92,7 @@ const apiClient = {
   exportProfile, importProfile,
   getStatus, getStatusLogs,
   identifyImage, identifyBatch, identifyVideo,
+  forecastCard, forecastSealed,
 };
 
 export default apiClient;

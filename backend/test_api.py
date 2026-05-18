@@ -925,6 +925,139 @@ def test_identify_video_ffmpeg_missing(client, monkeypatch):
     assert body["error"] and "ffmpeg" in body["error"].lower()
 
 
+# ----- /forecast (DeepSeek text-only) --------------------------------------
+
+def _patch_deepseek_chat(monkeypatch, raw_content, *, raise_exc=None):
+    """Same shape as _patch_deepseek but for the chat_json() method."""
+    from providers import deepseek as ds
+    from providers.deepseek import DeepSeekResult
+
+    def fake_chat_json(self, system_prompt, user_prompt, **kw):
+        if raise_exc is not None:
+            raise raise_exc
+        return DeepSeekResult(
+            raw_content=raw_content, model="deepseek-v4-pro-test",
+            prompt_tokens=200, completion_tokens=120,
+        )
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: True)
+    monkeypatch.setattr(ds.DeepSeekVision, "chat_json", fake_chat_json)
+
+
+def _seed_card_with_history(client, name="Forecast Test Card"):
+    """Helper: create a card + log a few PriceHistory rows. Returns the card id."""
+    res = client.post("/cards/", json={
+        "name": name, "set_name": "Test Set", "game": "yugioh",
+        "rarity": "Ultra Rare", "quantity": 1, "is_foil": False,
+    })
+    assert res.status_code == 200
+    card_id = res.json()["id"]
+    # Trigger a refresh so PriceHistory has rows (mock path: nothing happens
+    # because no providers configured, but the row gets logged with a price).
+    # Easier: use the test DB directly via the running app's SessionLocal.
+    import database, models
+    from datetime import datetime, timedelta
+    with database.SessionLocal() as db:
+        now = datetime.utcnow()
+        for i, price in enumerate([5.00, 5.50, 6.00, 6.40, 7.00]):
+            db.add(models.PriceHistory(
+                item_type="card", item_id=card_id, source="TCGPlayer",
+                price=price, timestamp=now - timedelta(days=4 - i),
+            ))
+        db.commit()
+    return card_id
+
+
+def test_forecast_card_happy_path(client, monkeypatch):
+    """Forecast endpoint returns parsed horizons + cache flag false on first call."""
+    card_id = _seed_card_with_history(client)
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7,  "low": 6.50, "high": 8.00, "target": 7.20, "confidence": 0.7},
+            {"days": 30, "low": 6.00, "high": 9.00, "target": 7.50, "confidence": 0.55},
+            {"days": 90, "low": 5.00, "high": 12.00, "target": 8.00, "confidence": 0.4},
+        ],
+        "direction": "up",
+        "reasoning": "Steady upward trend over 5 samples; rarity supports premium.",
+        "drivers": ["consistent uptick", "ultra rare scarcity"],
+        "caveats": ["small sample size", "set rotation risk"],
+    }))
+    # Important: clear cache so test order doesn't matter
+    import forecast_service; forecast_service.clear_cache()
+
+    res = client.get(f"/forecast/card/{card_id}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["item_type"] == "card"
+    assert body["item_id"] == card_id
+    assert body["direction"] == "up"
+    assert len(body["horizons"]) == 3
+    assert body["horizons"][0]["days"] == 7
+    assert body["horizons"][0]["target"] == 7.20
+    assert "consistent uptick" in body["drivers"]
+    assert body["cached"] is False
+    assert body["history_samples_used"] == 5
+
+
+def test_forecast_cache_hit_on_second_call(client, monkeypatch):
+    """Same item + same history → second call served from cache, cached=True."""
+    card_id = _seed_card_with_history(client, name="Cache Test Card")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [{"days": 7, "low": 1, "high": 2, "target": 1.5, "confidence": 0.5}],
+        "direction": "flat", "reasoning": "Stable.", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+
+    r1 = client.get(f"/forecast/card/{card_id}")
+    r2 = client.get(f"/forecast/card/{card_id}")
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.json()["cached"] is False
+    assert r2.json()["cached"] is True
+    # Same content otherwise
+    assert r1.json()["horizons"] == r2.json()["horizons"]
+    assert r1.json()["direction"] == r2.json()["direction"]
+
+
+def test_forecast_clamps_invalid_horizons(client, monkeypatch):
+    """Model returning low > high → backend swaps; target outside range → re-centred."""
+    card_id = _seed_card_with_history(client, name="Clamp Test Card")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [
+            {"days": 7, "low": 9.0, "high": 5.0, "target": 7.0, "confidence": 1.5},
+            {"days": 30, "low": 1.0, "high": 10.0, "target": 50.0, "confidence": -0.2},
+        ],
+        "direction": "sideways",  # invalid; should be normalised to "unknown"
+        "reasoning": "x", "drivers": [], "caveats": [],
+    }))
+    import forecast_service; forecast_service.clear_cache()
+
+    res = client.get(f"/forecast/card/{card_id}")
+    body = res.json()
+    h0, h1 = body["horizons"]
+    # low/high swapped to correct order; confidence clamped to 1.0
+    assert h0["low"] == 5.0 and h0["high"] == 9.0
+    assert h0["confidence"] == 1.0
+    # target re-centred when out of range
+    assert h1["target"] == round((1.0 + 10.0) / 2.0, 2)
+    assert h1["confidence"] == 0.0
+    assert body["direction"] == "unknown"
+
+
+def test_forecast_503_when_key_missing(client, monkeypatch):
+    """No DEEPSEEK_API_KEY → 503 (matches /identify behavior)."""
+    card_id = _seed_card_with_history(client, name="No Key Card")
+    from providers import deepseek as ds
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: False)
+    res = client.get(f"/forecast/card/{card_id}")
+    assert res.status_code == 503
+
+
+def test_forecast_404_when_card_missing(client, monkeypatch):
+    """Nonexistent card_id → clean 404, not a 500."""
+    _patch_deepseek_chat(monkeypatch, "{}")
+    res = client.get("/forecast/card/999999")
+    assert res.status_code == 404
+
+
 def test_identify_video_rejects_non_video_mime(client, monkeypatch):
     """An image accidentally posted to /identify/video → 415, no extract call."""
     _patch_deepseek(monkeypatch, "{}")

@@ -1508,3 +1508,84 @@ form button { margin-right: 10px; }
   margin: 6px 0;
   font-size: 0.9rem;
 }
+
+/* ============================================================================
+ * ForecastPanel — DeepSeek price projection (embedded on detail pages)
+ * ============================================================================ */
+
+.forecast-panel {
+  margin-top: 24px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.forecast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.forecast-header h3 { margin: 0; }
+.forecast-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 8px 0;
+}
+.forecast-headline .dir-emoji { font-size: 1.4rem; }
+.forecast-headline[data-direction="up"] .dir-label { color: #4ade80; }
+.forecast-headline[data-direction="down"] .dir-label { color: var(--neon-red, #ff3c50); }
+.forecast-headline[data-direction="flat"] .dir-label { color: var(--text-mute); }
+.forecast-headline .dir-now { font-weight: 400; }
+
+.forecast-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  margin: 8px 0;
+}
+.forecast-table th,
+.forecast-table td {
+  padding: 6px 10px;
+  text-align: right;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.forecast-table th:first-child,
+.forecast-table td:first-child { text-align: left; }
+.forecast-table th {
+  color: var(--text-mute);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+}
+.forecast-table td.target { font-weight: 700; }
+.forecast-table tr[data-dir="up"]   td.target { color: #4ade80; }
+.forecast-table tr[data-dir="down"] td.target { color: var(--neon-red, #ff3c50); }
+.forecast-reasoning {
+  margin: 10px 0;
+  font-style: italic;
+  color: var(--text);
+}
+.forecast-bullets {
+  margin: 8px 0;
+  font-size: 0.9rem;
+}
+.forecast-bullets ul { margin: 4px 0 0 18px; padding: 0; }
+.forecast-bullets.caveats { color: var(--neon-gold, #ffc828); }
+.forecast-footer {
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+.forecast-disclaimer {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 200, 40, 0.08);
+  border-left: 3px solid var(--neon-gold, #ffc828);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--text);
+}
