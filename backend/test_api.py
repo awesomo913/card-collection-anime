@@ -441,6 +441,30 @@ def test_ebay_fetch_listings_drops_non_ebay_urls(monkeypatch):
     assert [l["title"] for l in listings] == ["legit"]
 
 
+def test_ebay_fetch_listings_rejects_non_https_image(monkeypatch):
+    """Security: image URLs render in an <img>; drop non-https values."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"itemSummaries": [
+                {"title": "x", "price": {"value": "5.0", "currency": "USD"},
+                 "itemWebUrl": "https://www.ebay.com/itm/1",
+                 "image": {"imageUrl": "http://insecure.example/x.jpg"}},
+            ]}
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+    listings = ebay.EbayProvider().fetch_listings(
+        PriceQuery(name="x", set_name="y", game="magic")
+    )
+    assert len(listings) == 1
+    assert listings[0]["image"] is None
+
+
 def test_ebay_fetch_listings_empty_when_disabled(monkeypatch):
     """No credentials => no listings (graceful, never raises)."""
     for v in ["EBAY_OAUTH_TOKEN", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]:

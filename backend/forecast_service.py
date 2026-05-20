@@ -520,8 +520,8 @@ def forecast_item(
         body = json.loads(ds_result.raw_content)
     except json.JSONDecodeError as exc:
         logger.warning(
-            "forecast parse failed item=%s/%s content=%s",
-            item_type, item.id, ds_result.raw_content[:200],
+            "forecast parse failed item=%s/%s exc=%s content=%s",
+            item_type, item.id, exc, ds_result.raw_content[:200],
         )
         return schemas.ForecastResult(
             item_type=item_type,

@@ -37,6 +37,13 @@ def _is_ebay_url(url: str) -> bool:
     host = (parsed.hostname or "").lower()
     return host == "ebay.com" or host.endswith(".ebay.com")
 
+
+def _safe_image_url(url) -> Optional[str]:
+    """Allow only https image URLs. eBay images live on i.ebayimg.com (not
+    *.ebay.com), so _is_ebay_url is too strict — but the value is rendered in an
+    <img> tag, so we still block non-https / javascript: / data: URIs."""
+    return url if isinstance(url, str) and url.startswith("https://") else None
+
 CATEGORY_IDS = {
     # eBay Trading Cards categories
     "magic": "183454",
@@ -171,7 +178,7 @@ class EbayProvider:
                 "currency": price_obj.get("currency"),
                 "condition": item.get("condition"),
                 "url": url,
-                "image": image_obj.get("imageUrl"),
+                "image": _safe_image_url(image_obj.get("imageUrl")),
             })
             if len(listings) >= limit:
                 break

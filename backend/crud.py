@@ -1,3 +1,4 @@
+import logging
 from sqlalchemy.orm import Session
 import models, schemas
 from typing import Optional
@@ -9,6 +10,8 @@ from price_service import (
 )
 from datetime import datetime, timedelta
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 def get_card(db: Session, card_id: int):
     return db.query(models.Card).filter(models.Card.id == card_id).first()
@@ -213,8 +216,10 @@ def price_snapshot(db: Session):
         # Convert to a list of {timestamp, by_source}
         for ts_key in sorted(grouped.keys()):
             history.append({"timestamp": ts_key, "by_source": grouped[ts_key]})
-    except Exception:
-        # If anything fails, keep history as empty
+    except Exception as exc:
+        # If anything fails, keep history empty — but log it so a broken
+        # history query is visible rather than silently returning [].
+        logger.exception("price_snapshot history query failed: %s", exc)
         history = []
 
     return {
