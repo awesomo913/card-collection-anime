@@ -24,12 +24,18 @@ if [ -f "$HOME/.bashrc" ]; then
   # for untrusted text to reach eval.
   while IFS= read -r line; do
     eval "$line" 2>/dev/null || true  # safe: whitelist-filtered line from user-owned ~/.bashrc
-  done < <(grep -E '^[[:space:]]*export[[:space:]]+(DEEPSEEK_API_KEY|DEEPSEEK_MODEL|TCGPLAYER_API_KEY|IDENTIFY_WORKERS|PRICE_UPDATE_INTERVAL_HOURS|FORECAST_CACHE_TTL)=' "$HOME/.bashrc" 2>/dev/null)
+  done < <(grep -E '^[[:space:]]*export[[:space:]]+(DEEPSEEK_API_KEY|DEEPSEEK_MODEL|TCGPLAYER_CLIENT_ID|TCGPLAYER_CLIENT_SECRET|TCGPLAYER_API_KEY|EBAY_CLIENT_ID|EBAY_CLIENT_SECRET|EBAY_OAUTH_TOKEN|EBAY_MARKETPLACE_ID|CARDMARKET_APP_TOKEN|CARDMARKET_APP_SECRET|CARDMARKET_ACCESS_TOKEN|CARDMARKET_ACCESS_SECRET|PRICE_SOURCES_ENABLED|IDENTIFY_WORKERS|PRICE_UPDATE_INTERVAL_HOURS|FORECAST_CACHE_TTL)=' "$HOME/.bashrc" 2>/dev/null)
   if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     log "loaded DEEPSEEK_API_KEY from ~/.bashrc"
   else
     log "WARNING: DEEPSEEK_API_KEY not found in ~/.bashrc — /forecast and /identify will return 503"
   fi
+  # Price-provider creds: report PRESENCE only — never echo the value. Using
+  # `[ -n "${!v:-}" ]` (indirect expansion) tests the var without printing it;
+  # NOT `${v:-X}`, which would leak the actual secret to the log.
+  for v in TCGPLAYER_CLIENT_ID TCGPLAYER_CLIENT_SECRET EBAY_CLIENT_ID EBAY_CLIENT_SECRET EBAY_OAUTH_TOKEN; do
+    if [ -n "${!v:-}" ]; then log "price-provider cred present: $v"; fi
+  done
 fi
 
 log "git pull"
