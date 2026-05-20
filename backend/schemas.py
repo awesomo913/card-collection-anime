@@ -129,6 +129,9 @@ class CatalogResult(BaseModel):
     # right game tag on save instead of defaulting everything to 'magic'.
     # None when the source couldn't tell (e.g. OG-scrape fallback).
     game: Optional[str] = None
+    # 0.0-1.0 model confidence for DeepSeek-normalized sealed results (None for
+    # exact catalog hits). The frontend shows a "best guess" badge when low.
+    confidence: Optional[float] = None
 
 
 # ----- /identify endpoints (DeepSeek multimodal) ---------------------------

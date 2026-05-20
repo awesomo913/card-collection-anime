@@ -493,6 +493,110 @@ def test_ebay_listings_endpoint_404_missing_item(client):
     assert res.status_code == 404
 
 
+# ---- Sealed name search (DeepSeek normalize + eBay enrich) -----------------
+
+class _FakeChatResult:
+    def __init__(self, content):
+        self.raw_content = content
+        self.model = "deepseek-v4-pro"
+        self.prompt_tokens = 1
+        self.completion_tokens = 1
+
+
+def test_normalize_sealed_parses_deepseek():
+    import identify_service as svc
+
+    class FakeClient:
+        def chat_json(self, system, user, max_tokens=2500):
+            return _FakeChatResult(json.dumps({
+                "name": "Mega Evolution Booster Box",
+                "set_name": "Mega Evolution",
+                "product_type": "Booster Box",
+                "confidence": 0.8,
+            }))
+
+    out = svc.normalize_sealed(FakeClient(), "mega evo box", "pokemon")
+    assert out["name"] == "Mega Evolution Booster Box"
+    assert out["set_name"] == "Mega Evolution"
+    assert out["product_type"] == "Booster Box"
+    assert out["confidence"] == 0.8
+    assert out["game"] == "pokemon"  # game is authoritative from the caller
+
+
+def test_normalize_sealed_none_on_error():
+    import identify_service as svc
+    from providers.deepseek import DeepSeekVisionError
+
+    class FakeClient:
+        def chat_json(self, *a, **kw):
+            raise DeepSeekVisionError("boom")
+
+    assert svc.normalize_sealed(FakeClient(), "x", "pokemon") is None
+
+
+def test_normalize_sealed_none_on_unparseable():
+    import identify_service as svc
+
+    class FakeClient:
+        def chat_json(self, *a, **kw):
+            return _FakeChatResult("this is not json {{{")
+
+    assert svc.normalize_sealed(FakeClient(), "x", "yugioh") is None
+
+
+def test_catalog_search_sealed_pokemon_uses_ai_chain(client, monkeypatch):
+    """Non-Magic sealed name search falls back to DeepSeek normalize + eBay enrich."""
+    import main
+    import identify_service
+
+    monkeypatch.setattr(main.DeepSeekVision, "is_configured", lambda self: True)
+    monkeypatch.setattr(
+        identify_service, "normalize_sealed",
+        lambda client, q, game: {
+            "name": "Mega Evolution Elite Trainer Box",
+            "set_name": "Mega Evolution",
+            "product_type": "Elite Trainer Box",
+            "game": "pokemon",
+            "confidence": 0.7,
+        },
+    )
+    monkeypatch.setattr(main.EbayProvider, "is_enabled", lambda self: True)
+    monkeypatch.setattr(
+        main.EbayProvider, "fetch_listings",
+        lambda self, q, limit=10: [
+            {"title": "ETB", "price": 60.0, "currency": "USD", "condition": "New",
+             "url": "https://www.ebay.com/itm/1", "image": "https://i.ebayimg.com/x.jpg"},
+            {"title": "ETB2", "price": 80.0, "currency": "USD", "condition": "New",
+             "url": "https://www.ebay.com/itm/2", "image": "https://i.ebayimg.com/y.jpg"},
+        ],
+    )
+    res = client.get("/catalog/search", params={
+        "q": "mega evolution etb", "game": "pokemon", "sealed": "true",
+    })
+    assert res.status_code == 200
+    rows = res.json()
+    assert len(rows) >= 1
+    r = rows[0]
+    assert r["name"] == "Mega Evolution Elite Trainer Box"
+    assert r["set_name"] == "Mega Evolution"
+    assert r["game"] == "pokemon"
+    assert r["external_source"] == "deepseek"
+    assert r["image_url"] == "https://i.ebayimg.com/x.jpg"
+    assert r["tcgplayer_price"] == 70.0  # median of eBay listings
+    assert r["confidence"] == 0.7
+
+
+def test_catalog_search_sealed_pokemon_empty_without_deepseek(client, monkeypatch):
+    """No DeepSeek key => non-Magic sealed search returns [] (no regression)."""
+    import main
+    monkeypatch.setattr(main.DeepSeekVision, "is_configured", lambda self: False)
+    res = client.get("/catalog/search", params={
+        "q": "some box", "game": "yugioh", "sealed": "true",
+    })
+    assert res.status_code == 200
+    assert res.json() == []
+
+
 # ---- Catalog search --------------------------------------------------------
 
 def test_catalog_search_validates_game(client):

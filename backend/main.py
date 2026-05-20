@@ -766,9 +766,63 @@ def catalog_search(q: str, game: str, limit: int = 12, sealed: bool = False):
         return []
     if game.lower() not in {"magic", "pokemon", "yugioh"}:
         raise HTTPException(status_code=400, detail="game must be magic, pokemon, or yugioh")
-    return catalog_module.search(
+    results = catalog_module.search(
         q.strip(), game.lower(), limit=min(max(1, limit), 24), sealed=sealed
     )
+    if results:
+        return results
+    # Pokémon/YGO sealed have no public catalog API. When the normal search is
+    # empty, fall back to a DeepSeek-normalized guess enriched with an eBay
+    # price/image. Graceful: returns [] when DeepSeek isn't configured, which is
+    # exactly the old behavior — no regression.
+    if sealed and game.lower() in {"pokemon", "yugioh"}:
+        return _sealed_search_via_ai(q.strip(), game.lower())
+    return results
+
+
+def _sealed_search_via_ai(query: str, game: str) -> list:
+    """DeepSeek-normalize a sealed-product name, then enrich with an eBay
+    price + thumbnail. Returns a one-element CatalogResult-shaped list, or []
+    when DeepSeek is unavailable / can't place the product."""
+    client = DeepSeekVision()
+    if not client.is_configured():
+        return []
+    normalized = identify_service.normalize_sealed(client, query, game)
+    if not normalized:
+        return []
+
+    image_url: Optional[str] = None
+    price: Optional[float] = None
+    provider = EbayProvider()
+    if provider.is_enabled():
+        listings = provider.fetch_listings(
+            PriceQuery(
+                name=normalized["name"],
+                set_name=normalized.get("set_name") or "",
+                game=game,
+                is_sealed=True,
+                product_type=normalized.get("product_type"),
+            ),
+            limit=10,
+        )
+        prices = [l["price"] for l in listings if l.get("price") is not None]
+        if prices:
+            price = round(float(statistics.median(prices)), 2)
+        image_url = next((l["image"] for l in listings if l.get("image")), None)
+
+    return [{
+        "external_source": "deepseek",
+        "external_id": "",
+        "name": normalized["name"],
+        "set_name": normalized.get("set_name") or "",
+        "image_url": image_url,
+        "tcgplayer_price": price,
+        "tcgplayer_price_foil": None,
+        "rarity": None,
+        "tcgplayer_product_id": None,
+        "game": game,
+        "confidence": normalized.get("confidence"),
+    }]
 
 @app.post("/maintenance/backfill-games")
 def backfill_games(db: Session = Depends(get_db)):

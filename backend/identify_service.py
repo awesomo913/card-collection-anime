@@ -365,6 +365,83 @@ def identify_text(
     )
 
 
+# ----- Sealed-product name normalization (Feature: non-Magic sealed search) -
+#
+# Pokémon/Yu-Gi-Oh! sealed products have no public catalog API (Scryfall is
+# Magic-only; pokemontcg.io / ygoprodeck carry singles). When a name search
+# turns up nothing, we ask DeepSeek to normalize the user's rough description
+# into a canonical product, then the caller enriches it with an eBay price/image.
+
+SEALED_NORMALIZE_SYSTEM_PROMPT = (
+    "You normalize a user's rough description of a SEALED trading-card product "
+    "(booster box, elite trainer box, booster bundle, collection tin, etc.) into "
+    "a clean canonical product name + set for the given game. Return STRICT JSON "
+    "only, no prose:\n"
+    '{"name": "<canonical product name>", "set_name": "<set/expansion or empty>", '
+    '"product_type": "<Booster Box|Elite Trainer Box|Booster Bundle|Booster Pack|'
+    'Collection|Tin|Deck|Other>", "confidence": <0.0-1.0>}\n'
+    "If you cannot identify a real product, still return your best guess with a "
+    "low confidence (<= 0.3). Never invent a set you are unsure of — leave "
+    "set_name empty when unknown."
+)
+
+
+def build_sealed_normalize_prompt(query: str, game: str) -> str:
+    return (
+        f"Game: {game}\n"
+        f"User's description: {query}\n\n"
+        "Return the canonical sealed product as JSON."
+    )
+
+
+def normalize_sealed(
+    client: DeepSeekVision, query: str, game: str
+) -> Optional[dict]:
+    """Normalize a rough sealed-product description into a canonical dict.
+
+    Returns ``{name, set_name, product_type, game, confidence}`` or None on any
+    failure (network, unparseable output, empty name). Never raises. ``game`` is
+    taken from the caller (the user picked it), not the model — the model only
+    fills name/set/type/confidence.
+    """
+    try:
+        result = client.chat_json(
+            SEALED_NORMALIZE_SYSTEM_PROMPT,
+            build_sealed_normalize_prompt(query, game),
+            max_tokens=2500,
+        )
+    except DeepSeekVisionError as exc:
+        logger.warning("normalize_sealed failed query=%r: %s", query, exc)
+        return None
+
+    try:
+        data = json.loads(result.raw_content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "normalize_sealed parse failed query=%r content=%s: %s",
+            query, (result.raw_content or "")[:200], exc,
+        )
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return None
+    try:
+        confidence = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    return {
+        "name": name,
+        "set_name": str(data.get("set_name") or "").strip(),
+        "product_type": str(data.get("product_type") or "").strip() or None,
+        "game": game,
+        "confidence": confidence,
+    }
+
+
 # ----- Video frame extraction (Phase 3) ------------------------------------
 #
 # DeepSeek's hosted API doesn't accept video. We extract evenly-spaced JPEG

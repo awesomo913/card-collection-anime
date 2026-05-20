@@ -116,10 +116,10 @@ const AddSealedPage = () => {
           </div>
           <CatalogSearch game={sealed.game} onPick={handlePick} sealed />
           <p className="catalog-hint">
-            Paste a TCGplayer URL (any game) and we'll pull the product info. Magic
-            sealed also supports name search via Scryfall. Pokémon and Yu-Gi-Oh
-            sealed: paste a TCGplayer URL — we extract name + image (price you can
-            enter manually if not found).
+            Search by name (any game) or paste a TCGplayer / Scryfall URL. Magic
+            sealed resolves via Scryfall; Pokémon and Yu-Gi-Oh sealed use an
+            AI best-guess enriched with an eBay price — double-check the name and
+            set before saving. Pasting a TCGplayer URL is always the most exact.
           </p>
         </div>
       )}

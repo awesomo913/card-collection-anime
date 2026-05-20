@@ -108,14 +108,14 @@ const CatalogSearch = ({ game, onPick, sealed = false, autoFocus = false }) => {
     <div className="catalog-search">
       <label className="catalog-search-label">
         {sealed
-          ? 'Paste a TCGplayer / Scryfall URL — or search Magic sealed by name'
+          ? 'Search sealed product by name — or paste a TCGplayer / Scryfall URL'
           : 'Search TCG by name — or paste a Scryfall / TCGplayer / PokemonTCG / YGOPRODeck URL'}
         <input
           ref={inputRef}
           type="text"
           placeholder={
             sealed
-              ? 'Paste a TCGplayer URL or search Magic sealed…'
+              ? `Search ${game} sealed by name or paste a URL…`
               : `Search ${game} or paste a URL…`
           }
           value={query}
@@ -168,12 +168,22 @@ const CatalogSearch = ({ game, onPick, sealed = false, autoFocus = false }) => {
                 <img src={r.image_url} alt={r.name} loading="lazy" className="catalog-thumb" />
               )}
               <div className="catalog-meta">
-                <div className="catalog-name">{r.name}</div>
+                <div className="catalog-name">
+                  {r.name}
+                  {r.external_source === 'deepseek' && (
+                    <span
+                      className="catalog-guess-badge"
+                      title="AI-normalized best guess — double-check name/set before saving"
+                    >
+                      best guess{r.confidence != null ? ` ${Math.round(r.confidence * 100)}%` : ''}
+                    </span>
+                  )}
+                </div>
                 <div className="catalog-set">{r.set_name || '—'}</div>
                 <div className="catalog-price">
                   {r.tcgplayer_price != null
-                    ? `$${r.tcgplayer_price.toFixed(2)}`
-                    : 'No TCG price'}
+                    ? `$${r.tcgplayer_price.toFixed(2)}${r.external_source === 'deepseek' ? ' (eBay)' : ''}`
+                    : (r.external_source === 'deepseek' ? 'price on save' : 'No TCG price')}
                   {r.tcgplayer_price_foil != null && (
                     <span className="catalog-price-foil">
                       &nbsp;/ foil ${r.tcgplayer_price_foil.toFixed(2)}
