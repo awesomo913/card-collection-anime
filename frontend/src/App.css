@@ -1835,3 +1835,65 @@ form button { margin-right: 10px; }
 .game-section-header[data-game="pokemon"] { border-bottom-color: rgba(255, 209, 102, 0.5); }
 .game-section-header[data-game="yugioh"]  { border-bottom-color: rgba(255, 77, 109, 0.5); }
 .game-section-count { color: var(--text-mute); font-weight: 400; font-size: 0.85rem; }
+
+/* -- eBay listings panel --------------------------------------------------- */
+.ebay-panel {
+  margin-top: 24px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.ebay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.ebay-header h3 { margin: 0; }
+.ebay-summary { margin: 4px 0 12px; }
+.ebay-listings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ebay-listing {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.ebay-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+}
+.ebay-listing-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ebay-title {
+  color: var(--neon-gold);
+  text-decoration: none;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ebay-title:hover { text-decoration: underline; }
+.ebay-sub { margin: 0; font-size: 0.82rem; }
+.ebay-price { color: var(--neon-cyan); font-weight: 600; }
+.ebay-disclaimer {
+  margin-top: 12px;
+  font-size: 0.78rem;
+  font-style: italic;
+}

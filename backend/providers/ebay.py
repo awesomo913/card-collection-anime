@@ -12,6 +12,7 @@ import statistics
 import threading
 import time
 from typing import Optional
+from urllib.parse import urlparse
 
 from .base import PriceProvider, PriceQuery, ProviderResult, request_with_backoff
 
@@ -19,6 +20,22 @@ logger = logging.getLogger(__name__)
 
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 SEARCH_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+
+
+def _is_ebay_url(url: str) -> bool:
+    """True only for https links whose host is ebay.com or a subdomain.
+
+    Listing URLs come from an external API and are rendered as clickable links,
+    so we treat them as untrusted and drop anything that isn't clearly eBay.
+    """
+    try:
+        parsed = urlparse(url or "")
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return host == "ebay.com" or host.endswith(".ebay.com")
 
 CATEGORY_IDS = {
     # eBay Trading Cards categories
@@ -71,12 +88,13 @@ class EbayProvider:
             self._token_expires_at = time.time() + float(data.get("expires_in", 7200))
             return self._token
 
-    def fetch(self, query: PriceQuery) -> ProviderResult:
+    def _search_items(self, query: PriceQuery, limit: int = 20) -> list:
+        """Run the Browse API item-summary search; return raw itemSummaries (or [])."""
         if not self.is_enabled():
-            return ProviderResult(self.name, None)
+            return []
         token = self._get_token()
         if not token:
-            return ProviderResult(self.name, None)
+            return []
 
         q_parts = [query.name, query.set_name]
         if query.is_foil:
@@ -87,7 +105,7 @@ class EbayProvider:
 
         params = {
             "q": q,
-            "limit": "20",
+            "limit": str(limit),
             "filter": "buyingOptions:{FIXED_PRICE},conditions:{NEW|USED}",
         }
         category_id = CATEGORY_IDS.get(query.game.lower())
@@ -105,9 +123,12 @@ class EbayProvider:
             params=params,
         )
         if not resp or resp.status_code >= 400:
-            return ProviderResult(self.name, None)
+            return []
         data = resp.json()
-        items = data.get("itemSummaries", []) if isinstance(data, dict) else []
+        return data.get("itemSummaries", []) if isinstance(data, dict) else []
+
+    def fetch(self, query: PriceQuery) -> ProviderResult:
+        items = self._search_items(query)
         prices = []
         for item in items:
             price_obj = item.get("price") or {}
@@ -123,3 +144,35 @@ class EbayProvider:
         # Median is more robust to outliers than mean for marketplace listings.
         median = statistics.median(prices)
         return ProviderResult(self.name, round(float(median), 2), raw={"sample_size": len(prices)})
+
+    def fetch_listings(self, query: PriceQuery, limit: int = 10) -> list:
+        """Return individual eBay listings instead of a collapsed median.
+
+        Each listing: ``{title, price, currency, condition, url, image}``. Only
+        ``https://*.ebay.com`` item URLs survive — the rest are dropped as
+        untrusted external content. Never raises: returns [] when disabled or
+        on any upstream failure.
+        """
+        items = self._search_items(query, limit=limit)
+        listings = []
+        for item in items:
+            url = item.get("itemWebUrl") or ""
+            if not _is_ebay_url(url):
+                continue
+            price_obj = item.get("price") or {}
+            try:
+                price = float(price_obj.get("value"))
+            except (TypeError, ValueError):
+                price = None
+            image_obj = item.get("image") or {}
+            listings.append({
+                "title": item.get("title") or "(untitled)",
+                "price": round(price, 2) if price is not None else None,
+                "currency": price_obj.get("currency"),
+                "condition": item.get("condition"),
+                "url": url,
+                "image": image_obj.get("imageUrl"),
+            })
+            if len(listings) >= limit:
+                break
+        return listings

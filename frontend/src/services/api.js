@@ -27,6 +27,11 @@ export const triggerPriceUpdate = () => api.post('/prices/update');
 export const getPriceHistory = (itemType, itemId) =>
   api.get(`/price-history/${itemType}/${itemId}`);
 
+// Live eBay listings for an item (on-demand, button-triggered).
+// itemType: 'card' | 'sealed'. Returns { enabled, listings, summary }.
+export const getEbayListings = (itemType, id) =>
+  api.get(`/items/${itemType}/${id}/ebay`, { timeout: 30000 });
+
 // Live catalog search (game: 'magic' | 'pokemon' | 'yugioh')
 export const searchCatalog = (q, game, { limit = 12, sealed = false } = {}) =>
   api.get('/catalog/search', { params: { q, game, limit, sealed } });
@@ -104,6 +109,7 @@ const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
   getCollectionValue, getSnapshot, triggerPriceUpdate, getPriceHistory,
+  getEbayListings,
   searchCatalog, resolveCatalogUrl,
   exportProfile, importProfile,
   getStatus, getStatusLogs,

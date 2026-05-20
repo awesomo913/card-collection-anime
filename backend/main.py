@@ -1,5 +1,6 @@
 import logging
 import os
+import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
@@ -13,8 +14,9 @@ import crud, models, schemas
 from database import SessionLocal, engine
 from pathlib import Path
 from price_service import update_all_prices
-from providers import catalog as catalog_module
+from providers import PriceQuery, catalog as catalog_module
 from providers.deepseek import DeepSeekVision
+from providers.ebay import EbayProvider
 import identify_service
 import forecast_service
 import profile_backup
@@ -535,6 +537,47 @@ def forecast_sealed(sealed_id: int, db: Session = Depends(get_db)):
     client = _require_deepseek_client()
     item, history = _fetch_item_and_history(db, "sealed", sealed_id)
     return forecast_service.forecast_item(client, "sealed", item, history)
+
+
+def _ebay_summary(listings: list) -> schemas.EbaySummary:
+    """Min/median/max across listing prices (ignores listings with no price)."""
+    prices = [l["price"] for l in listings if l.get("price") is not None]
+    if not prices:
+        return schemas.EbaySummary(count=len(listings))
+    return schemas.EbaySummary(
+        count=len(listings),
+        median=round(float(statistics.median(prices)), 2),
+        min=round(min(prices), 2),
+        max=round(max(prices), 2),
+    )
+
+
+@app.get("/items/{item_type}/{item_id}/ebay", response_model=schemas.EbayListingsResponse)
+def ebay_listings(item_type: str, item_id: int, db: Session = Depends(get_db)):
+    """Live eBay listings (with clickable links) for an item. On-demand —
+    button-triggered, not part of the scheduled refresh. Returns enabled=False
+    when eBay credentials are absent so the UI can show a configured-or-not state."""
+    if item_type not in ("card", "sealed"):
+        raise HTTPException(status_code=400, detail="item_type must be 'card' or 'sealed'")
+    item, _ = _fetch_item_and_history(db, item_type, item_id)
+
+    provider = EbayProvider()
+    if not provider.is_enabled():
+        return schemas.EbayListingsResponse(enabled=False, listings=[], summary=None)
+
+    is_sealed = item_type == "sealed"
+    query = PriceQuery(
+        name=item.name,
+        set_name=item.set_name or "",
+        game=item.game or "magic",
+        is_foil=bool(getattr(item, "is_foil", False)),
+        is_sealed=is_sealed,
+        product_type=getattr(item, "product_type", None) if is_sealed else None,
+    )
+    listings = provider.fetch_listings(query)
+    return schemas.EbayListingsResponse(
+        enabled=True, listings=listings, summary=_ebay_summary(listings),
+    )
 
 
 # Whole-collection forecast batch. Bounded fan-out via thread pool because each

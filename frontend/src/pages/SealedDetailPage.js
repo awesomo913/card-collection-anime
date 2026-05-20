@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import Sparkline from '../components/Sparkline';
 import ForecastPanel from '../components/ForecastPanel';
+import EbayListingsPanel from '../components/EbayListingsPanel';
 import { PRODUCT_TYPES_BY_GAME } from '../data/options';
 
 /* --------------------------------------------------------------------------
@@ -339,6 +340,9 @@ const SealedDetailPage = () => {
       )}
 
       <ForecastPanel itemType="sealed" itemId={item.id} />
+
+      {/* Live eBay listings + links. On-demand button. */}
+      <EbayListingsPanel itemType="sealed" itemId={item.id} />
 
       {item.price_sources && Object.keys(item.price_sources).length > 0 && (
         <div className="detail-sources">

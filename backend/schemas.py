@@ -259,3 +259,28 @@ class BatchForecastResponse(BaseModel):
     cache_hits: int
     cache_misses: int
     model: str
+
+
+class EbayListing(BaseModel):
+    """A single live eBay listing surfaced for an item."""
+    title: str
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    condition: Optional[str] = None
+    url: str
+    image: Optional[str] = None
+
+
+class EbaySummary(BaseModel):
+    count: int
+    median: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+
+
+class EbayListingsResponse(BaseModel):
+    """eBay listings for an item. ``enabled`` is False when eBay credentials are
+    absent — the UI renders an 'eBay not configured' state in that case."""
+    enabled: bool
+    listings: List[EbayListing]
+    summary: Optional[EbaySummary] = None

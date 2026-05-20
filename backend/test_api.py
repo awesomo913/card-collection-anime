@@ -372,6 +372,127 @@ def test_latest_tier_spread_from_history():
     assert _latest_tier_spread(rows) == pytest.approx(0.2)
 
 
+# ---- eBay listings ---------------------------------------------------------
+
+def _enable_ebay(monkeypatch):
+    monkeypatch.setenv("EBAY_OAUTH_TOKEN", "static-tok")
+
+
+def test_ebay_fetch_listings_parses_items(monkeypatch):
+    """fetch_listings returns per-listing title/price/currency/condition/url/image."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"itemSummaries": [
+                {"title": "Charizard PSA 10",
+                 "price": {"value": "500.00", "currency": "USD"},
+                 "itemWebUrl": "https://www.ebay.com/itm/123",
+                 "condition": "Used",
+                 "image": {"imageUrl": "https://i.ebayimg.com/x.jpg"}},
+                {"title": "Charizard raw",
+                 "price": {"value": "120.00", "currency": "USD"},
+                 "itemWebUrl": "https://www.ebay.com/itm/456",
+                 "condition": "New",
+                 "image": {"imageUrl": "https://i.ebayimg.com/y.jpg"}},
+            ]}
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    listings = ebay.EbayProvider().fetch_listings(
+        PriceQuery(name="Charizard", set_name="Base", game="pokemon"), limit=10
+    )
+    assert len(listings) == 2
+    assert listings[0]["title"] == "Charizard PSA 10"
+    assert listings[0]["price"] == 500.0
+    assert listings[0]["currency"] == "USD"
+    assert listings[0]["url"] == "https://www.ebay.com/itm/123"
+    assert listings[0]["condition"] == "Used"
+    assert listings[0]["image"] == "https://i.ebayimg.com/x.jpg"
+
+
+def test_ebay_fetch_listings_drops_non_ebay_urls(monkeypatch):
+    """Security: only https://*.ebay.com listing links are kept."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"itemSummaries": [
+                {"title": "legit", "price": {"value": "5.0", "currency": "USD"},
+                 "itemWebUrl": "https://www.ebay.com/itm/1"},
+                {"title": "phishy", "price": {"value": "5.0", "currency": "USD"},
+                 "itemWebUrl": "https://evil.example.com/itm/2"},
+                {"title": "no-url", "price": {"value": "5.0", "currency": "USD"}},
+            ]}
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    listings = ebay.EbayProvider().fetch_listings(
+        PriceQuery(name="x", set_name="y", game="magic")
+    )
+    assert [l["title"] for l in listings] == ["legit"]
+
+
+def test_ebay_fetch_listings_empty_when_disabled(monkeypatch):
+    """No credentials => no listings (graceful, never raises)."""
+    for v in ["EBAY_OAUTH_TOKEN", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]:
+        monkeypatch.delenv(v, raising=False)
+    from providers import ebay
+    from providers.base import PriceQuery
+    assert ebay.EbayProvider().fetch_listings(
+        PriceQuery(name="x", set_name="y", game="magic")
+    ) == []
+
+
+def test_ebay_listings_endpoint_disabled(client, monkeypatch):
+    for v in ["EBAY_OAUTH_TOKEN", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]:
+        monkeypatch.delenv(v, raising=False)
+    r = client.post("/cards/", json={"name": "EbayCard", "set_name": "S", "game": "magic"})
+    cid = r.json()["id"]
+    res = client.get(f"/items/card/{cid}/ebay")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["enabled"] is False
+    assert body["listings"] == []
+
+
+def test_ebay_listings_endpoint_returns_listings(client, monkeypatch):
+    r = client.post("/cards/", json={"name": "EbayCard2", "set_name": "S", "game": "magic"})
+    cid = r.json()["id"]
+    canned = [
+        {"title": "A", "price": 5.0, "currency": "USD", "condition": "New",
+         "url": "https://www.ebay.com/itm/1", "image": None},
+        {"title": "B", "price": 15.0, "currency": "USD", "condition": "Used",
+         "url": "https://www.ebay.com/itm/2", "image": None},
+    ]
+    import main
+    monkeypatch.setattr(main.EbayProvider, "is_enabled", lambda self: True)
+    monkeypatch.setattr(main.EbayProvider, "fetch_listings", lambda self, q, limit=10: canned)
+    res = client.get(f"/items/card/{cid}/ebay")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["enabled"] is True
+    assert len(body["listings"]) == 2
+    assert body["listings"][0]["url"] == "https://www.ebay.com/itm/1"
+    assert body["summary"]["count"] == 2
+    assert body["summary"]["min"] == 5.0
+    assert body["summary"]["max"] == 15.0
+    assert body["summary"]["median"] == 10.0
+
+
+def test_ebay_listings_endpoint_404_missing_item(client):
+    res = client.get("/items/card/99999999/ebay")
+    assert res.status_code == 404
+
+
 # ---- Catalog search --------------------------------------------------------
 
 def test_catalog_search_validates_game(client):

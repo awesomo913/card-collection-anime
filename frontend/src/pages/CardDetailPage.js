@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import Sparkline from '../components/Sparkline';
 import ForecastPanel from '../components/ForecastPanel';
+import EbayListingsPanel from '../components/EbayListingsPanel';
 import { CONDITIONS } from '../data/options';
 
 /* --------------------------------------------------------------------------
@@ -356,6 +357,9 @@ const CardDetailPage = () => {
       {/* DeepSeek-powered short-term projection. On-demand button; server
           caches 24h. Speculative — disclaimer rendered inside the component. */}
       <ForecastPanel itemType="card" itemId={card.id} />
+
+      {/* Live eBay listings + links. On-demand button. */}
+      <EbayListingsPanel itemType="card" itemId={card.id} />
 
       {card.price_sources && Object.keys(card.price_sources).length > 0 && (
         <div className="detail-sources">
