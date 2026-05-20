@@ -79,10 +79,13 @@ export const identifyVideo = (file) => {
 };
 // Text-only "search a card by name" — DeepSeek infers the game from the name.
 // query + game_hint go as query params (matches the /identify/image style).
+// 120s timeout: deepseek-v4-pro does heavy hidden reasoning and has been
+// observed taking ~68s on a single query — 60s was too tight and intermittently
+// aborted the request before the server responded.
 export const identifyText = (query, gameHint) =>
   api.post('/identify/text', null, {
     params: { query, ...(gameHint ? { game_hint: gameHint } : {}) },
-    timeout: 60000,
+    timeout: 120000,
   });
 
 // DeepSeek-powered price forecasting. Server caches results 24h.
