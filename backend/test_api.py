@@ -1579,6 +1579,25 @@ def test_game_from_slug():
     assert g("randomword-foo") is None
 
 
+def test_game_from_text_conservative():
+    """Name/set last-resort guess: matches distinctive tokens, must NOT
+    false-positive on card names that merely contain a substring."""
+    from providers.catalog import game_from_text as g
+    # Positive: distinctive game word present.
+    assert g("Pokemon: Mega Evolution Mini Portfolio") == "pokemon"
+    assert g("Pokémon Stacking Tin") == "pokemon"
+    assert g("Yu-Gi-Oh! Structure Deck") == "yugioh"
+    assert g("YuGiOh Mega Tin") == "yugioh"
+    assert g("Magic: The Gathering Bundle") == "magic"
+    assert g("Some MTG Commander Deck") == "magic"
+    # Critical negatives: card names that contain a substring of a game word.
+    assert g("Dark Magician") is None          # 'Magic' in 'Magician' must NOT match
+    assert g("Magician's Rod", "Set X") is None
+    assert g("Black Lotus") is None
+    assert g(None, None) is None
+    assert g("") is None
+
+
 def test_resolve_tcgplayer_url_sets_game_from_product_line(client, monkeypatch):
     """A YGO TCGplayer URL resolve now carries game='yugioh' so the saved item
     is grouped correctly instead of defaulting to magic."""

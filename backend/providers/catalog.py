@@ -107,6 +107,31 @@ def game_from_slug(slug: str) -> Optional[str]:
             "magic": "magic", "mtg": "magic"}.get(head)
 
 
+# Distinctive, word-boundary game tokens for a last-resort guess from an item's
+# name/set text. Deliberately conservative: a bare "magic" would mis-tag the
+# card "Dark Magician", so Magic only matches the full "Magic: The Gathering"
+# (or "MTG"), never the lone word.
+_GAME_TEXT_PATTERNS = (
+    ("pokemon", re.compile(r"\bpok[eé]mon\b", re.IGNORECASE)),
+    ("yugioh", re.compile(r"\byu-?gi-?oh!?\b|\byugioh\b", re.IGNORECASE)),
+    ("magic", re.compile(r"\bmagic:?\s+the\s+gathering\b|\bmtg\b", re.IGNORECASE)),
+)
+
+
+def game_from_text(*texts: Optional[str]) -> Optional[str]:
+    """Best-effort game guess from item name/set text. Last resort only — used
+    when the authoritative TCGplayer productLineName + slug both came back empty
+    (e.g. 'Pokemon: Mega Evolution Mini Portfolio'). Returns None when nothing
+    distinctive matches."""
+    blob = " ".join(t for t in texts if t)
+    if not blob:
+        return None
+    for game, pattern in _GAME_TEXT_PATTERNS:
+        if pattern.search(blob):
+            return game
+    return None
+
+
 def _resolve_scryfall_url(path: str) -> Optional[Dict]:
     # /card/<set>/<num>[/<name>] OR /cards/<uuid>
     set_num = re.match(r"^/card/([^/]+)/([^/?#]+)", path)

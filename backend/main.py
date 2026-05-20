@@ -742,6 +742,10 @@ def backfill_games(db: Session = Depends(get_db)):
                 details = catalog_module._tcgplayer_product_details(item.tcgplayer_product_id)
                 if details:
                     new_game = catalog_module.game_from_product_line(details.get("productLineName"))
+            # Last resort: distinctive game token in the name/set (catches items
+            # like "Pokemon: Mega Evolution Mini Portfolio" the API can't place).
+            if not new_game:
+                new_game = catalog_module.game_from_text(item.name, item.set_name)
             if new_game:
                 if new_game != item.game:
                     item.game = new_game
