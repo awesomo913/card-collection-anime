@@ -1707,3 +1707,75 @@ form button { margin-right: 10px; }
 .direction-down { color: var(--neon-red); }
 .direction-flat { color: var(--text-mute); }
 .direction-unknown { color: var(--text-mute); opacity: 0.55; }
+
+/* ---- Forecast scope toggle (All / Cards / Sealed) ------------------------- */
+.scope-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin: 4px 0 14px;
+  padding: 4px;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 999px;
+}
+.scope-tab {
+  padding: 4px 16px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.scope-tab:hover { color: var(--text); }
+.scope-tab.active {
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-violet));
+  color: #07050d;
+}
+
+/* ---- Identify: search-by-name block --------------------------------------- */
+.text-search {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(241, 238, 249, 0.12);
+}
+.text-search h3 {
+  margin: 0 0 4px;
+  background: linear-gradient(90deg, var(--neon-pink), var(--neon-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-search-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.text-search-form input[type="text"] {
+  flex: 1 1 260px;
+  min-width: 200px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid rgba(22, 224, 255, 0.25);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.text-search-form input[type="text"]:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+.text-search-form select {
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 8px;
+  color: var(--text);
+}
+.text-search-form select option { background: var(--bg-2); color: var(--text); }
+.text-search-form button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

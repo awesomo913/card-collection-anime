@@ -471,6 +471,25 @@ async def identify_video(
     )
 
 
+@app.post("/identify/text", response_model=schemas.IdentifyResult)
+def identify_text(query: str, game_hint: Optional[str] = None):
+    """Identify card candidates from a typed name — the 'search like Google' box.
+
+    Text-only DeepSeek call (no image). DeepSeek infers the game from the name,
+    so the user never picks magic/pokemon/yugioh first. Returns the same
+    IdentifyResult shape as /identify/image so the frontend renders it with the
+    same candidate cards (Use URL / Search query buttons → /catalog/resolve).
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        raise HTTPException(status_code=400, detail="query must be at least 2 characters")
+    if len(q) > 256:
+        raise HTTPException(status_code=400, detail="query too long (max 256 characters)")
+    client = _require_deepseek_client()
+    logger.info("identify/text query=%r hint=%s", q, game_hint)
+    return identify_service.identify_text(client, q, game_hint=game_hint)
+
+
 # ============================================================================
 # /forecast — DeepSeek-powered short-term price projection
 #

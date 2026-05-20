@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import IdentifyDropZone from '../components/IdentifyDropZone';
+import api from '../services/api';
 
 /**
  * IdentifyPage — dedicated batch identification + review.
@@ -23,6 +24,31 @@ const IdentifyPage = () => {
   const navigate = useNavigate();
   const [batch, setBatch] = useState(null);
   const [dismissed, setDismissed] = useState(new Set());
+
+  // Text search-by-name state. Explicit submit (button/Enter), NOT
+  // search-as-you-type — each search is a DeepSeek call, so we don't fire one
+  // per keystroke.
+  const [textQuery, setTextQuery] = useState('');
+  const [textGame, setTextGame] = useState('');        // '' = let DeepSeek infer the game
+  const [textResult, setTextResult] = useState(null);
+  const [textPhase, setTextPhase] = useState('idle');  // idle | loading | done | error
+  const [textError, setTextError] = useState(null);
+
+  const runTextSearch = async (e) => {
+    if (e) e.preventDefault();
+    const q = textQuery.trim();
+    if (q.length < 2) return;
+    setTextPhase('loading');
+    setTextError(null);
+    try {
+      const res = await api.identifyText(q, textGame || undefined);
+      setTextResult(res.data);
+      setTextPhase('done');
+    } catch (err) {
+      setTextError(err?.response?.data?.detail || err?.message || 'Search failed');
+      setTextPhase('error');
+    }
+  };
 
   const handleUseUrl = (url) => {
     // Dispatch the same event AddCardPage's "📋 Paste URL" button dispatches.
@@ -102,6 +128,67 @@ const IdentifyPage = () => {
           })}
         </ul>
       )}
+
+      <section className="text-search">
+        <h3>Search a card by name</h3>
+        <p className="muted">
+          Type a card name like you would in Google — DeepSeek figures out the
+          game and returns matches you can send straight through the add-card
+          flow. One search per click (keeps API cost down).
+        </p>
+        <form className="text-search-form" onSubmit={runTextSearch}>
+          <input
+            type="text"
+            placeholder='e.g. "dark magician starlight rare"'
+            value={textQuery}
+            onChange={(e) => setTextQuery(e.target.value)}
+          />
+          <select
+            value={textGame}
+            onChange={(e) => setTextGame(e.target.value)}
+            aria-label="Game hint"
+          >
+            <option value="">Any game</option>
+            <option value="magic">Magic</option>
+            <option value="pokemon">Pokémon</option>
+            <option value="yugioh">Yu-Gi-Oh!</option>
+          </select>
+          <button
+            type="submit"
+            className="primary"
+            disabled={textPhase === 'loading' || textQuery.trim().length < 2}
+          >
+            {textPhase === 'loading' ? 'Searching…' : 'Search'}
+          </button>
+        </form>
+
+        {textPhase === 'error' && <div className="error">{textError}</div>}
+
+        {textPhase === 'done' && textResult && (
+          textResult.error ? (
+            <div className="error">{textResult.error}</div>
+          ) : textResult.candidates.length === 0 ? (
+            <p className="muted">No matches. Try a more specific name + set.</p>
+          ) : (
+            <ul className="identify-results">
+              {textResult.candidates.map((c, i) => (
+                <li
+                  key={i}
+                  className="identify-result-card"
+                  data-game={(c.game || 'unknown').toLowerCase()}
+                >
+                  <CandidateBlock
+                    c={c}
+                    onUseUrl={handleUseUrl}
+                    onUseQuery={handleUseQuery}
+                    primary={i === 0}
+                  />
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+      </section>
     </section>
   );
 };

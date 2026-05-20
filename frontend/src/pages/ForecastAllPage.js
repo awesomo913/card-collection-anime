@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 
 /**
@@ -38,7 +38,36 @@ const directionArrow = (direction) => ({
   up: '↑', down: '↓', flat: '→', unknown: '?',
 }[direction] || '?');
 
+const SCOPE_TITLES = {
+  all: 'Forecast All',
+  card: 'Forecast All Cards',
+  sealed: 'Forecast All Sealed',
+};
+
+// Scope tabs. Each links to ?scope=… — switching re-POSTs only that scope's
+// ids, but the server's (item, last_history_ts) cache means already-forecast
+// items return in milliseconds, so toggling feels instant after first run.
+const ScopeToggle = ({ current }) => (
+  <div className="scope-toggle" role="tablist" aria-label="Forecast scope">
+    {[['all', 'All'], ['card', 'Cards'], ['sealed', 'Sealed']].map(([val, label]) => (
+      <Link
+        key={val}
+        to={val === 'all' ? '/forecast-all' : `/forecast-all?scope=${val}`}
+        className={`scope-tab${current === val ? ' active' : ''}`}
+        role="tab"
+        aria-selected={current === val}
+      >
+        {label}
+      </Link>
+    ))}
+  </div>
+);
+
 const ForecastAllPage = () => {
+  const [searchParams] = useSearchParams();
+  const rawScope = searchParams.get('scope') || 'all';
+  const scope = ['all', 'card', 'sealed'].includes(rawScope) ? rawScope : 'all';
+
   const [phase, setPhase] = useState('loading');  // loading | running | done | error
   const [itemCount, setItemCount] = useState(0);
   const [response, setResponse] = useState(null);
@@ -57,8 +86,14 @@ const ForecastAllPage = () => {
 
     (async () => {
       try {
+        setPhase('loading');
+        // Load only what the scope needs — a sealed-only forecast shouldn't
+        // pull (or pay to forecast) every card.
+        const wantCards = scope === 'all' || scope === 'card';
+        const wantSealed = scope === 'all' || scope === 'sealed';
         const [cardsRes, sealedRes] = await Promise.all([
-          api.getCards(), api.getSealedProducts(),
+          wantCards ? api.getCards() : Promise.resolve({ data: [] }),
+          wantSealed ? api.getSealedProducts() : Promise.resolve({ data: [] }),
         ]);
         if (!mounted) return;
         const items = [
@@ -67,9 +102,9 @@ const ForecastAllPage = () => {
         ];
         setItemCount(items.length);
         if (items.length === 0) {
-          setPhase('done');
           setResponse({ results: [], aggregate: [], duration_seconds: 0,
                         cache_hits: 0, cache_misses: 0, model: '(none)' });
+          setPhase('done');
           return;
         }
         setPhase('running');
@@ -88,7 +123,7 @@ const ForecastAllPage = () => {
     })();
 
     return () => { mounted = false; if (tickHandle) clearTimeout(tickHandle); };
-  }, []);
+  }, [scope]);
 
   const sortedRows = useMemo(() => {
     if (!response?.results) return [];
@@ -111,7 +146,8 @@ const ForecastAllPage = () => {
   if (phase === 'error') {
     return (
       <section className="forecast-all-page">
-        <h2>Forecast All</h2>
+        <h2>{SCOPE_TITLES[scope]}</h2>
+        <ScopeToggle current={scope} />
         <div className="error">Forecast failed: {error}</div>
         <p><Link to="/">← Back to dashboard</Link></p>
       </section>
@@ -121,7 +157,8 @@ const ForecastAllPage = () => {
   if (phase === 'running') {
     return (
       <section className="forecast-all-page">
-        <h2>Forecast All</h2>
+        <h2>{SCOPE_TITLES[scope]}</h2>
+        <ScopeToggle current={scope} />
         <div className="forecast-running">
           <div className="spinner" />
           <p>Forecasting {itemCount} item{itemCount === 1 ? '' : 's'}… {elapsedSec}s</p>
@@ -137,8 +174,13 @@ const ForecastAllPage = () => {
   if (phase === 'done' && (!response || response.results.length === 0)) {
     return (
       <section className="forecast-all-page">
-        <h2>Forecast All</h2>
-        <p>No items in your collection yet. Add some cards or sealed products first.</p>
+        <h2>{SCOPE_TITLES[scope]}</h2>
+        <ScopeToggle current={scope} />
+        <p>
+          {scope === 'card' ? 'No cards in your collection yet.'
+            : scope === 'sealed' ? 'No sealed products in your collection yet.'
+            : 'No items in your collection yet. Add some cards or sealed products first.'}
+        </p>
         <p><Link to="/">← Back to dashboard</Link></p>
       </section>
     );
@@ -146,7 +188,8 @@ const ForecastAllPage = () => {
 
   return (
     <section className="forecast-all-page">
-      <h2>Forecast All</h2>
+      <h2>{SCOPE_TITLES[scope]}</h2>
+      <ScopeToggle current={scope} />
 
       <div className="forecast-disclaimer">
         Speculative projection from an LLM. NOT investment advice.

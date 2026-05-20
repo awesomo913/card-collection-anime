@@ -189,6 +189,7 @@ const CardListPage = () => {
             ))}
           </select>
           <Link to="/cards/add" className="add-button">+ Add Card</Link>
+          <Link to="/forecast-all?scope=card" className="add-button">📈 Forecast Cards</Link>
         </div>
 
         <div className="filter-row chips-row">

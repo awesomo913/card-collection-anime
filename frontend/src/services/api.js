@@ -77,6 +77,13 @@ export const identifyVideo = (file) => {
     timeout: 180000,
   });
 };
+// Text-only "search a card by name" — DeepSeek infers the game from the name.
+// query + game_hint go as query params (matches the /identify/image style).
+export const identifyText = (query, gameHint) =>
+  api.post('/identify/text', null, {
+    params: { query, ...(gameHint ? { game_hint: gameHint } : {}) },
+    timeout: 60000,
+  });
 
 // DeepSeek-powered price forecasting. Server caches results 24h.
 export const forecastCard = (id) =>
@@ -97,7 +104,7 @@ const apiClient = {
   searchCatalog, resolveCatalogUrl,
   exportProfile, importProfile,
   getStatus, getStatusLogs,
-  identifyImage, identifyBatch, identifyVideo,
+  identifyImage, identifyBatch, identifyVideo, identifyText,
   forecastCard, forecastSealed, forecastBatch,
 };
 

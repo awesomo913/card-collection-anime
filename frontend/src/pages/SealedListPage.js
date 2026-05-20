@@ -24,6 +24,16 @@ const SealedListPage = () => {
     (s.set_name || '').toLowerCase().includes(search.toLowerCase())
   );
 
+  // Header summary — total units + value across what's currently shown.
+  // Mirrors CardListPage's .filter-summary. Quantity defaults to 1 when the
+  // field is missing/non-finite so a product without an explicit qty still counts.
+  const totalUnits = filtered.reduce(
+    (sum, s) => sum + (Number.isFinite(s.quantity) ? s.quantity : 1), 0
+  );
+  const totalValue = filtered.reduce(
+    (sum, s) => sum + ((s.current_price || 0) * (Number.isFinite(s.quantity) ? s.quantity : 1)), 0
+  );
+
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this sealed product?')) return;
     try {
@@ -48,6 +58,17 @@ const SealedListPage = () => {
           onChange={(e) => setSearch(e.target.value)}
         />
         <Link to="/sealed/add" className="add-button">+ Add Sealed</Link>
+        <Link to="/forecast-all?scope=sealed" className="add-button">📈 Forecast Sealed</Link>
+      </div>
+
+      <div className="filter-summary" aria-live="polite">
+        <strong>{filtered.length}</strong> product{filtered.length === 1 ? '' : 's'}
+        {totalUnits !== filtered.length && (
+          <> &nbsp;·&nbsp; <strong>{totalUnits}</strong> total units</>
+        )}
+        {totalValue > 0 && (
+          <> &nbsp;·&nbsp; <strong>${totalValue.toFixed(2)}</strong> value</>
+        )}
       </div>
 
       {filtered.length === 0 ? (

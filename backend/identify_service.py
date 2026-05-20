@@ -107,6 +107,75 @@ def build_user_prompt(game_hint: Optional[str]) -> str:
     return USER_PROMPT_TEMPLATE.format(game_hint_line=hint)
 
 
+# ----- Text search (typed name → candidates, no image) ----------------------
+# Mirrors the photo flow but the model reasons from a typed query instead of
+# pixels. Reuses _parse_model_output + _coerce_candidate downstream so the URL
+# allowlist, confidence clamp, and game normalisation all apply unchanged.
+# This is the "search by name like Google" entry point — DeepSeek infers the
+# game from the name, so the user never has to pick magic/pokemon/yugioh first.
+
+TEXT_SYSTEM_PROMPT = (
+    "You help a trading-card inventory app find cards from a typed name or "
+    "description. Supported games: Magic: The Gathering, Pokémon, Yu-Gi-Oh!. "
+    "Infer the game from the name when the user didn't say it. "
+    "You ALWAYS respond with valid JSON matching the schema described in the "
+    "user message — no prose, no markdown fences, no explanation. "
+    "Conservative on confidence: 0.9+ means you're certain of the exact card "
+    "and printing, 0.5-0.8 means you know the card but not which printing the "
+    "user means, <0.5 means the query is ambiguous and you're guessing. If you "
+    "cannot match any real card, return a single candidate with "
+    'game="unknown", name="unidentified", confidence=0.0 rather than inventing '
+    "a card."
+)
+
+TEXT_USER_PROMPT_TEMPLATE = """Find the trading card(s) the user means by this query:
+
+"{query}"
+
+Return JSON matching this exact schema:
+
+{{
+  "candidates": [
+    {{
+      "game": "magic" | "pokemon" | "yugioh" | "unknown",
+      "name": "<card name as printed>",
+      "set_name": "<set/edition name or null>",
+      "printing_notes": "<foil / holo / alt-art / starlight rare / etc or null>",
+      "confidence": 0.0-1.0,
+      "justification": "<one short sentence on how you matched the query>",
+      "suggested_urls": ["https://www.tcgplayer.com/..."],
+      "search_queries": ["dark magician starlight rare rarity collection"]
+    }}
+  ]
+}}
+
+Rules:
+- Up to 3 candidates, sorted by confidence descending. If the query matches
+  several plausible printings, list them as separate candidates.
+- Only include a TCGplayer URL when you are confident of the exact product.
+  NEVER invent a /product/<id>/ URL — leave suggested_urls=[] if unsure.
+- ALWAYS include at least one search_queries string (what you would type into
+  TCGplayer's search box to find this card).
+{game_hint_line}"""
+
+
+def build_text_user_prompt(query: str, game_hint: Optional[str]) -> str:
+    """Per-call user prompt for a typed-name search.
+
+    ``query`` is inserted as a ``.format`` argument, so any ``{`` / ``}`` it
+    contains is placed literally (format does not re-parse substituted values)
+    — no brace-injection risk from user input.
+    """
+    hint = ""
+    if game_hint and game_hint.lower() in {"magic", "pokemon", "yugioh"}:
+        hint = (
+            f"- Caller hint: the user is probably looking for a "
+            f"{game_hint.upper()} card. Bias toward that game unless the query "
+            f"clearly says otherwise."
+        )
+    return TEXT_USER_PROMPT_TEMPLATE.format(query=query, game_hint_line=hint)
+
+
 def _coerce_candidate(raw: dict) -> Optional[schemas.IdentifyCandidate]:
     """Validate + normalise one candidate dict from the model.
 
@@ -242,6 +311,53 @@ def identify_single(
     )
     return schemas.IdentifyResult(
         source_filename=filename, candidates=candidates, error=None
+    )
+
+
+def identify_text(
+    client: DeepSeekVision,
+    query: str,
+    game_hint: Optional[str] = None,
+) -> schemas.IdentifyResult:
+    """Identify card candidates from a typed name/description. Never raises.
+
+    Text-only — calls ``chat_json`` instead of the multimodal ``identify``.
+    Result carries ``source_filename=query`` so the frontend's existing
+    per-result rendering (which keys off source_filename) works unchanged.
+    """
+    started = time.monotonic()
+    try:
+        result = client.chat_json(
+            TEXT_SYSTEM_PROMPT,
+            build_text_user_prompt(query, game_hint),
+            max_tokens=1200,
+        )
+    except DeepSeekVisionError as exc:
+        logger.warning("identify_text failed query=%r: %s", query, exc)
+        return schemas.IdentifyResult(
+            source_filename=query, candidates=[], error=str(exc),
+        )
+
+    try:
+        candidates = _parse_model_output(result.raw_content)
+    except ValueError as exc:
+        logger.warning(
+            "identify_text parse failed query=%r content=%s: %s",
+            query, result.raw_content[:200], exc,
+        )
+        return schemas.IdentifyResult(
+            source_filename=query, candidates=[],
+            error=f"Model output unparseable: {exc}",
+        )
+
+    elapsed_ms = (time.monotonic() - started) * 1000.0
+    logger.info(
+        "identify_text ok query=%r candidates=%s ms=%.0f tokens_in=%s tokens_out=%s",
+        query, len(candidates), elapsed_ms,
+        result.prompt_tokens, result.completion_tokens,
+    )
+    return schemas.IdentifyResult(
+        source_filename=query, candidates=candidates, error=None,
     )
 
 

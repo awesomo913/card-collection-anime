@@ -1446,3 +1446,92 @@ def test_create_card_with_external_id_uses_catalog_price(client, monkeypatch):
     # Average across {TCGPlayer: 99.99, mock_eBay, mock_CardMarket} or just 99.99
     # depending on whether mocks fire. Catalog price is preserved as TCGPlayer.
     assert body["price_sources"]["TCGPlayer"] == 99.99
+
+
+# ----- /identify/text (DeepSeek text-only name search) ----------------------
+# Reuses the chat_json mock helper (_patch_deepseek_chat) since the text path
+# calls chat_json, not the multimodal identify().
+
+def test_identify_text_happy_path(client, monkeypatch):
+    """Typed query → ranked candidates; source_filename echoes the query."""
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "candidates": [
+            {
+                "game": "yugioh", "name": "Dark Magician",
+                "set_name": "Rarity Collection 5", "printing_notes": "Starlight Rare",
+                "confidence": 0.88, "justification": "Exact name + rarity match.",
+                "suggested_urls": [
+                    "https://www.tcgplayer.com/product/687196/yugioh-rarity-collection-5-dark-magician-starlight-rare"
+                ],
+                "search_queries": ["dark magician starlight rare rarity collection"],
+            },
+            {
+                "game": "yugioh", "name": "Dark Magician",
+                "set_name": "Legend of Blue Eyes", "confidence": 0.5,
+                "justification": "Older printing also matches the name.",
+                "search_queries": ["dark magician legend of blue eyes"],
+            },
+        ]
+    }))
+    res = client.post("/identify/text", params={"query": "dark magician starlight rare"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["source_filename"] == "dark magician starlight rare"
+    assert body["error"] is None
+    assert len(body["candidates"]) == 2
+    top = body["candidates"][0]
+    assert top["game"] == "yugioh"
+    assert top["name"] == "Dark Magician"
+    assert top["confidence"] == 0.88
+    assert top["suggested_urls"][0].startswith("https://www.tcgplayer.com/product/687196/")
+    # Sorted by confidence descending (defensive sort in _parse_model_output).
+    assert body["candidates"][0]["confidence"] >= body["candidates"][1]["confidence"]
+
+
+def test_identify_text_strips_hallucinated_url(client, monkeypatch):
+    """Confirms the text path reuses _coerce_candidate's URL allowlist."""
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "candidates": [{
+            "game": "magic", "name": "Black Lotus", "confidence": 0.7,
+            "justification": "Name match.",
+            "suggested_urls": [
+                "https://evil.example.com/steal",                  # dropped
+                "https://scryfall.com/card/lea/232/black-lotus",   # kept
+            ],
+            "search_queries": ["black lotus alpha"],
+        }]
+    }))
+    res = client.post("/identify/text", params={"query": "black lotus"})
+    assert res.status_code == 200
+    urls = res.json()["candidates"][0]["suggested_urls"]
+    assert len(urls) == 1
+    assert "scryfall.com" in urls[0]
+    assert all("evil.example.com" not in u for u in urls)
+
+
+def test_identify_text_validates_query(client, monkeypatch):
+    """Empty / too-short / too-long query → 400 before any model call."""
+    _patch_deepseek_chat(monkeypatch, "{}")  # would succeed if reached
+    assert client.post("/identify/text", params={"query": ""}).status_code == 400
+    assert client.post("/identify/text", params={"query": "a"}).status_code == 400
+    assert client.post("/identify/text", params={"query": "x" * 257}).status_code == 400
+
+
+def test_identify_text_503_when_key_missing(client, monkeypatch):
+    """No DEEPSEEK_API_KEY → 503 (matches /identify/image + /forecast contract)."""
+    from providers import deepseek as ds
+    monkeypatch.setattr(ds.DeepSeekVision, "is_configured", lambda self: False)
+    res = client.post("/identify/text", params={"query": "pikachu"})
+    assert res.status_code == 503
+    assert "DEEPSEEK_API_KEY" in res.json()["detail"]
+
+
+def test_identify_text_handles_parse_failure(client, monkeypatch):
+    """Model returns non-JSON → error field set, not a 500."""
+    _patch_deepseek_chat(monkeypatch, "this is not json {{{")
+    res = client.post("/identify/text", params={"query": "charizard"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["candidates"] == []
+    assert body["error"] and "unparseable" in body["error"].lower()
+    assert body["source_filename"] == "charizard"
