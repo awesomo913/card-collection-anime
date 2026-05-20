@@ -105,6 +105,45 @@ export const forecastSealed = (id) =>
 export const forecastBatch = (items) =>
   api.post('/forecast/batch', { items }, { timeout: 600000 });
 
+// Streaming whole-collection forecast (Server-Sent Events). Calls
+// onItem({index, done, total, row}) per finished item and onDone({aggregate,
+// duration_seconds, cache_hits, cache_misses, model}) at the end. Uses fetch +
+// ReadableStream because axios can't stream incrementally in the browser.
+// Throws on transport failure so the caller can fall back to forecastBatch.
+export const forecastBatchStream = async (items, { onItem, onDone, signal } = {}) => {
+  const resp = await fetch(`${API_BASE_URL}/forecast/batch/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+    signal,
+  });
+  if (!resp.ok || !resp.body) {
+    throw new Error(`forecast stream failed: HTTP ${resp.status}`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  // SSE frames are separated by a blank line. Buffer chunks and parse whole
+  // frames as they arrive.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const evMatch = frame.match(/^event:\s*(.+)$/m);
+      const dataMatch = frame.match(/^data:\s*(.+)$/m);
+      if (!evMatch || !dataMatch) continue;
+      let payload;
+      try { payload = JSON.parse(dataMatch[1]); } catch { continue; }
+      if (evMatch[1].trim() === 'item') onItem?.(payload);
+      else if (evMatch[1].trim() === 'done') onDone?.(payload);
+    }
+  }
+};
+
 const apiClient = {
   getCards, getCard, createCard, updateCard, deleteCard,
   getSealedProducts, getSealedProduct, createSealedProduct, updateSealedProduct, deleteSealedProduct,
@@ -114,7 +153,7 @@ const apiClient = {
   exportProfile, importProfile,
   getStatus, getStatusLogs,
   identifyImage, identifyBatch, identifyVideo, identifyText,
-  forecastCard, forecastSealed, forecastBatch,
+  forecastCard, forecastSealed, forecastBatch, forecastBatchStream,
 };
 
 export default apiClient;

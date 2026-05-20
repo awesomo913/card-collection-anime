@@ -85,6 +85,7 @@ const ForecastAllPage = () => {
   const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
 
   useEffect(() => {
     let mounted = true;
@@ -120,11 +121,39 @@ const ForecastAllPage = () => {
           return;
         }
         setPhase('running');
+        setProgress({ done: 0, total: items.length });
         tick();
-        const res = await api.forecastBatch(items);
-        if (!mounted) return;
-        setResponse(res.data);
-        setPhase('done');
+        // Stream per-item results so the progress bar reflects real completion
+        // instead of a time-based guess. Fall back to the blocking endpoint if
+        // streaming isn't available (older proxy, network quirk).
+        const collected = new Array(items.length).fill(null);
+        let donePayload = null;
+        try {
+          await api.forecastBatchStream(items, {
+            onItem: (p) => {
+              if (!mounted) return;
+              if (typeof p.index === 'number') collected[p.index] = p.row;
+              setProgress({ done: p.done, total: p.total });
+            },
+            onDone: (p) => { donePayload = p; },
+          });
+          if (!mounted) return;
+          setResponse({
+            results: collected.filter(Boolean),
+            aggregate: donePayload?.aggregate || [],
+            duration_seconds: donePayload?.duration_seconds ?? 0,
+            cache_hits: donePayload?.cache_hits ?? 0,
+            cache_misses: donePayload?.cache_misses ?? 0,
+            model: donePayload?.model || '(none)',
+          });
+          setPhase('done');
+        } catch (streamErr) {
+          console.warn('Forecast stream failed; falling back to blocking batch.', streamErr);
+          const res = await api.forecastBatch(items);
+          if (!mounted) return;
+          setResponse(res.data);
+          setPhase('done');
+        }
       } catch (e) {
         if (!mounted) return;
         setError(e?.response?.data?.detail || e?.message || 'Forecast failed');
@@ -178,17 +207,20 @@ const ForecastAllPage = () => {
             <div
               className="eta-bar-fill"
               style={{
-                width: `${Math.min(95, (elapsedSec / Math.max(8, itemCount * SECONDS_PER_ITEM)) * 100)}%`,
+                width: `${progress.total > 0
+                  ? Math.round((progress.done / progress.total) * 100)
+                  : Math.min(95, (elapsedSec / Math.max(8, itemCount * SECONDS_PER_ITEM)) * 100)}%`,
               }}
             />
           </div>
           <p className="muted">
-            {fmtDuration(elapsedSec)} elapsed · estimated ~
-            {fmtDuration(Math.max(8, itemCount * SECONDS_PER_ITEM))} total
+            {progress.total > 0
+              ? `${progress.done} of ${progress.total} forecast`
+              : 'Starting…'}{' '}· {fmtDuration(elapsedSec)} elapsed
           </p>
           <p className="muted">
-            ~10s per item, fanned out 4-wide on the Pi. Cached re-runs finish in
-            under a second.
+            Live progress as each item finishes. Cached re-runs finish in under a
+            second.
           </p>
         </div>
       </section>

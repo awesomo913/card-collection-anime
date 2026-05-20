@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import statistics
@@ -23,7 +24,7 @@ import profile_backup
 import status as status_module
 from scheduler import start_scheduler
 import uvicorn
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
@@ -676,52 +677,15 @@ def forecast_batch(
 
     # Pre-load items + history serially (DB-bound + cheap). Doing this on the
     # request thread avoids opening N parallel DB sessions for the same Pi.
-    prepared: list[tuple[int, str, object, list, Optional[str]]] = []
-    for idx, it in enumerate(req.items):
-        try:
-            item, history = _fetch_item_and_history(db, it.type, it.id)
-            prepared.append((idx, it.type, item, history, None))
-        except HTTPException as exc:
-            prepared.append((idx, it.type, None, [], str(exc.detail)))
-
+    prepared = _prepare_forecast_items(db, req.items)
     results: list[Optional[schemas.BatchForecastResultRow]] = [None] * len(prepared)
-
-    def _run_one(prep_tuple):
-        idx, item_type, item, history, prep_err = prep_tuple
-        # Capture the original id so 404'd items still show up in results.
-        original_id = req.items[idx].id
-        if prep_err is not None:
-            return idx, schemas.BatchForecastResultRow(
-                type=item_type, id=original_id, name="(unknown)", qty=0,
-                current_price=None, forecast=None, error=prep_err,
-            )
-        try:
-            forecast = forecast_service.forecast_item(
-                client, item_type, item, history,
-            )
-            return idx, schemas.BatchForecastResultRow(
-                type=item_type, id=item.id, name=item.name,
-                qty=int(getattr(item, "quantity", 1) or 1),
-                current_price=item.current_price,
-                forecast=forecast, error=None,
-            )
-        except Exception as exc:  # noqa: BLE001 — batch row tolerates any error
-            logger.warning(
-                "forecast/batch row failed type=%s id=%s: %s",
-                item_type, original_id, exc,
-            )
-            return idx, schemas.BatchForecastResultRow(
-                type=item_type, id=item.id, name=item.name,
-                qty=int(getattr(item, "quantity", 1) or 1),
-                current_price=item.current_price,
-                forecast=None, error=str(exc),
-            )
 
     cache_hits = 0
     cache_misses = 0
     last_model = "(none)"
     with ThreadPoolExecutor(max_workers=_FORECAST_WORKERS) as pool:
-        for fut in as_completed([pool.submit(_run_one, p) for p in prepared]):
+        futs = [pool.submit(_run_forecast_row, client, p, req.items[p[0]].id) for p in prepared]
+        for fut in as_completed(futs):
             idx, row = fut.result()
             results[idx] = row
             if row.forecast is not None:
@@ -750,6 +714,121 @@ def forecast_batch(
         cache_hits=cache_hits, cache_misses=cache_misses,
         model=last_model,
     )
+
+
+def _prepare_forecast_items(db: Session, items) -> list:
+    """Load (item, history) for each requested item on the request thread.
+    404'd items become a prep-error tuple so they still appear in results."""
+    prepared: list[tuple[int, str, object, list, Optional[str]]] = []
+    for idx, it in enumerate(items):
+        try:
+            item, history = _fetch_item_and_history(db, it.type, it.id)
+            prepared.append((idx, it.type, item, history, None))
+        except HTTPException as exc:
+            prepared.append((idx, it.type, None, [], str(exc.detail)))
+    return prepared
+
+
+def _run_forecast_row(client, prep_tuple, original_id):
+    """Forecast one prepared item -> (idx, BatchForecastResultRow). Never raises;
+    per-row errors are captured in the row's ``error`` field. Shared by the
+    blocking and streaming batch endpoints."""
+    idx, item_type, item, history, prep_err = prep_tuple
+    if prep_err is not None:
+        return idx, schemas.BatchForecastResultRow(
+            type=item_type, id=original_id, name="(unknown)", qty=0,
+            current_price=None, forecast=None, error=prep_err,
+        )
+    try:
+        forecast = forecast_service.forecast_item(client, item_type, item, history)
+        return idx, schemas.BatchForecastResultRow(
+            type=item_type, id=item.id, name=item.name,
+            qty=int(getattr(item, "quantity", 1) or 1),
+            current_price=item.current_price, forecast=forecast, error=None,
+        )
+    except Exception as exc:  # noqa: BLE001 — batch row tolerates any error
+        logger.warning(
+            "forecast/batch row failed type=%s id=%s: %s", item_type, original_id, exc,
+        )
+        return idx, schemas.BatchForecastResultRow(
+            type=item_type, id=item.id, name=item.name,
+            qty=int(getattr(item, "quantity", 1) or 1),
+            current_price=item.current_price, forecast=None, error=str(exc),
+        )
+
+
+@app.post("/forecast/batch/stream")
+def forecast_batch_stream(req: schemas.BatchForecastRequest, db: Session = Depends(get_db)):
+    """Streaming variant of /forecast/batch.
+
+    Emits one Server-Sent-Event per finished item (so the UI shows real per-item
+    progress instead of a guessed ETA) then a terminal 'done' event with the
+    portfolio aggregate. Same per-item logic as the blocking endpoint; per-item
+    failures carry their own error field and never abort the stream.
+    """
+    if len(req.items) > _MAX_FORECAST_BATCH:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Batch size {len(req.items)} exceeds limit of "
+                f"{_MAX_FORECAST_BATCH}. Split into smaller requests."
+            ),
+        )
+    client = _require_deepseek_client()
+    started = time.monotonic()
+    # All DB work happens here, up front, while the session is open — the
+    # generator below only touches already-loaded ORM objects + history.
+    prepared = _prepare_forecast_items(db, req.items)
+    results: list[Optional[schemas.BatchForecastResultRow]] = [None] * len(prepared)
+    total = len(prepared)
+
+    def _event(name: str, payload: dict) -> str:
+        return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
+
+    def _generate():
+        cache_hits = cache_misses = 0
+        last_model = "(none)"
+        done = 0
+        if prepared:
+            with ThreadPoolExecutor(max_workers=_FORECAST_WORKERS) as pool:
+                futs = [
+                    pool.submit(_run_forecast_row, client, p, req.items[p[0]].id)
+                    for p in prepared
+                ]
+                for fut in as_completed(futs):
+                    idx, row = fut.result()
+                    results[idx] = row
+                    done += 1
+                    if row.forecast is not None:
+                        if row.forecast.cached:
+                            cache_hits += 1
+                        else:
+                            cache_misses += 1
+                        last_model = row.forecast.model
+                    yield _event("item", {
+                        "index": idx, "done": done, "total": total,
+                        "row": row.model_dump(mode="json"),
+                    })
+        final_rows = [
+            r if r is not None else schemas.BatchForecastResultRow(
+                type="card", id=req.items[i].id, error="internal: row never resolved",
+            )
+            for i, r in enumerate(results)
+        ]
+        aggregate = _compute_batch_aggregate(final_rows)
+        duration = time.monotonic() - started
+        logger.info(
+            "forecast/batch/stream n=%s duration=%.2fs hits=%s misses=%s",
+            total, duration, cache_hits, cache_misses,
+        )
+        yield _event("done", {
+            "aggregate": [a.model_dump(mode="json") for a in aggregate],
+            "duration_seconds": round(duration, 3),
+            "cache_hits": cache_hits, "cache_misses": cache_misses,
+            "model": last_model,
+        })
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
 @app.get("/catalog/search", response_model=list[schemas.CatalogResult])

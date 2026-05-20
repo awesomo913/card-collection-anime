@@ -1389,6 +1389,40 @@ def test_forecast_card_happy_path(client, monkeypatch):
     assert body["history_samples_used"] == 5
 
 
+def test_forecast_batch_stream_emits_item_events_then_done(client, monkeypatch):
+    """Streaming batch emits one SSE 'item' event per finished row + a final
+    'done' event carrying the aggregate."""
+    a = _seed_card_with_history(client, name="StreamA")
+    b = _seed_card_with_history(client, name="StreamB")
+    _patch_deepseek_chat(monkeypatch, json.dumps({
+        "horizons": [{"days": 7, "low": 1, "high": 2, "target": 1.5, "confidence": 0.5}],
+        "direction": "flat", "reasoning": "x", "drivers": [], "caveats": [],
+    }))
+    import forecast_service
+    forecast_service.clear_cache()
+
+    res = client.post("/forecast/batch/stream", json={"items": [
+        {"type": "card", "id": a}, {"type": "card", "id": b},
+    ]})
+    assert res.status_code == 200, res.text
+    assert "text/event-stream" in res.headers["content-type"]
+    body = res.text
+    assert body.count("event: item") == 2
+    assert body.count("event: done") == 1
+
+    data_lines = [
+        json.loads(line[len("data:"):].strip())
+        for line in body.splitlines() if line.startswith("data:")
+    ]
+    item_payloads, done_payload = data_lines[:-1], data_lines[-1]
+    assert item_payloads[0]["done"] == 1
+    assert item_payloads[-1]["done"] == 2
+    assert all(p["total"] == 2 for p in item_payloads)
+    assert "row" in item_payloads[0]
+    assert "aggregate" in done_payload
+    assert done_payload["cache_misses"] == 2
+
+
 def test_forecast_cache_hit_on_second_call(client, monkeypatch):
     """Same item + same history → second call served from cache, cached=True."""
     card_id = _seed_card_with_history(client, name="Cache Test Card")
