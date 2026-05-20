@@ -327,10 +327,14 @@ def identify_text(
     """
     started = time.monotonic()
     try:
+        # 2500 (not a smaller value): deepseek-v4-pro spends hidden reasoning
+        # tokens against max_tokens before emitting the JSON. A tight budget
+        # (we first tried 1200) returns EMPTY content — reasoning ate it all.
+        # Matches the forecast endpoint, which hit the same wall at 1500.
         result = client.chat_json(
             TEXT_SYSTEM_PROMPT,
             build_text_user_prompt(query, game_hint),
-            max_tokens=1200,
+            max_tokens=2500,
         )
     except DeepSeekVisionError as exc:
         logger.warning("identify_text failed query=%r: %s", query, exc)
