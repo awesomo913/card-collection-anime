@@ -125,6 +125,10 @@ class CatalogResult(BaseModel):
     # product ID. Frontend forwards this on save so refresh can hit TCGplayer's
     # product details API directly for an authoritative per-printing price.
     tcgplayer_product_id: Optional[str] = None
+    # Detected game ('magic'|'pokemon'|'yugioh') so the frontend can set the
+    # right game tag on save instead of defaulting everything to 'magic'.
+    # None when the source couldn't tell (e.g. OG-scrape fallback).
+    game: Optional[str] = None
 
 
 # ----- /identify endpoints (DeepSeek multimodal) ---------------------------

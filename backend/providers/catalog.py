@@ -70,6 +70,43 @@ def resolve_url(url: str) -> Optional[Dict]:
     return None
 
 
+# TCGplayer's productLineName / URL-slug head → our game tag. Lets imported
+# items carry a real game instead of defaulting to "magic", which is what the
+# group-by-game list views need.
+_PRODUCT_LINE_TO_GAME = {
+    "yugioh": "yugioh", "yu-gi-oh": "yugioh", "yu-gi-oh!": "yugioh",
+    "pokemon": "pokemon", "pokémon": "pokemon",
+    "magic": "magic", "magic the gathering": "magic", "mtg": "magic",
+}
+
+
+def game_from_product_line(product_line: Optional[str]) -> Optional[str]:
+    """Map TCGplayer ``productLineName`` ('YuGiOh'/'Pokemon'/'Magic') to a game
+    tag. None when unknown so callers fall back to the slug."""
+    if not product_line:
+        return None
+    key = str(product_line).strip().lower()
+    if key in _PRODUCT_LINE_TO_GAME:
+        return _PRODUCT_LINE_TO_GAME[key]
+    for needle, game in (
+        ("yugioh", "yugioh"), ("yu-gi", "yugioh"),
+        ("pokémon", "pokemon"), ("pokemon", "pokemon"),
+        ("magic", "magic"),
+    ):
+        if needle in key:
+            return game
+    return None
+
+
+def game_from_slug(slug: str) -> Optional[str]:
+    """First token of a TCGplayer URL slug is usually the game line."""
+    if not slug:
+        return None
+    head = slug.split("-", 1)[0].lower()
+    return {"yugioh": "yugioh", "pokemon": "pokemon",
+            "magic": "magic", "mtg": "magic"}.get(head)
+
+
 def _resolve_scryfall_url(path: str) -> Optional[Dict]:
     # /card/<set>/<num>[/<name>] OR /cards/<uuid>
     set_num = re.match(r"^/card/([^/]+)/([^/?#]+)", path)
@@ -147,6 +184,7 @@ def _result_from_tcgplayer_details(product_id: str, details: Dict) -> Dict:
         "tcgplayer_price_foil": None,
         "rarity": details.get("rarityName"),
         "tcgplayer_product_id": str(product_id),
+        "game": game_from_product_line(details.get("productLineName")),
     }
 
 
@@ -186,11 +224,19 @@ def _resolve_tcgplayer_url(path: str, full_url: str) -> Optional[Dict]:
     #    per-printing marketPrice, cleaned name, rarity, set. No fuzzy-match.
     tcg_details = _tcgplayer_product_details(product_id)
     if tcg_details:
-        return _result_from_tcgplayer_details(product_id, tcg_details)
+        result = _result_from_tcgplayer_details(product_id, tcg_details)
+        # Fall back to the slug head for game when the details API omitted
+        # productLineName.
+        if not result.get("game"):
+            result["game"] = game_from_slug(slug)
+        return result
 
     # 3. Last resort — scrape the TCGplayer page itself for OG metadata.
     #    Used when the details API is rate-limited or for unusual product types.
-    return _scrape_tcgplayer_og(full_url, product_id)
+    result = _scrape_tcgplayer_og(full_url, product_id)
+    if result and not result.get("game"):
+        result["game"] = game_from_slug(slug)
+    return result
 
 
 def _split_slug(slug: str) -> Tuple[str, str]:
@@ -394,6 +440,7 @@ def _scryfall_card_to_result(card: Dict) -> Dict:
         "tcgplayer_price": _safe_float(prices.get("usd")),
         "tcgplayer_price_foil": _safe_float(prices.get("usd_foil")),
         "rarity": card.get("rarity"),
+        "game": "magic",
     }
 
 
@@ -410,6 +457,7 @@ def _pokemontcg_card_to_result(card: Dict) -> Dict:
         "tcgplayer_price": normal or holo,
         "tcgplayer_price_foil": holo,
         "rarity": card.get("rarity"),
+        "game": "pokemon",
     }
 
 
@@ -430,6 +478,7 @@ def _ygoprodeck_card_to_result(card: Dict, preferred_set_tokens: Optional[List[s
         "tcgplayer_price": set_price if set_price is not None else _safe_float(prices.get("tcgplayer_price")),
         "tcgplayer_price_foil": None,
         "rarity": rarity or card.get("type"),
+        "game": "yugioh",
     }
 
 

@@ -21,7 +21,7 @@ import profile_backup
 import status as status_module
 from scheduler import start_scheduler
 import uvicorn
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
@@ -719,12 +719,66 @@ def catalog_search(q: str, game: str, limit: int = 12, sealed: bool = False):
         q.strip(), game.lower(), limit=min(max(1, limit), 24), sealed=sealed
     )
 
+@app.post("/maintenance/backfill-games")
+def backfill_games(db: Session = Depends(get_db)):
+    """Re-derive the `game` tag for items imported before game detection existed.
+
+    Everything used to default to 'magic' because TCGplayer-URL imports never
+    set a real game. This walks cards + sealed and fixes the tag:
+      1. Catalog-linked items (scryfall/pokemontcg/ygoprodeck) → map source → game (no network).
+      2. TCGplayer-linked items → re-fetch productLineName (one call each).
+    Idempotent; safe to re-run. Returns per-type update counts + anything it
+    couldn't resolve (so the user can fix those by hand).
+    """
+    source_to_game = {"scryfall": "magic", "pokemontcg": "pokemon", "ygoprodeck": "yugioh"}
+    updated = {"cards": 0, "sealed": 0}
+    unresolved: list[dict] = []
+    for kind, model in (("cards", models.Card), ("sealed", models.SealedProduct)):
+        for item in db.query(model).all():
+            new_game = None
+            if item.external_source in source_to_game:
+                new_game = source_to_game[item.external_source]
+            elif item.tcgplayer_product_id:
+                details = catalog_module._tcgplayer_product_details(item.tcgplayer_product_id)
+                if details:
+                    new_game = catalog_module.game_from_product_line(details.get("productLineName"))
+            if new_game:
+                if new_game != item.game:
+                    item.game = new_game
+                    updated[kind] += 1
+            else:
+                unresolved.append({"type": kind, "id": item.id, "name": item.name})
+    db.commit()
+    logger.info("backfill-games updated=%s unresolved=%s", updated, len(unresolved))
+    return {"updated": updated, "unresolved": unresolved}
+
+
 # Single-port deploy mode: when ../frontend/build exists (e.g. on a Pi after
-# `npm run build`), serve the static UI from the same FastAPI process. Mounted
-# last so explicit API routes above always win.
+# `npm run build`), serve the static UI from the same FastAPI process.
+#
+# SPA fallback: a plain StaticFiles(html=True) mount only serves index.html at
+# exactly "/" — direct-loading or refreshing a client route (/sealed,
+# /forecast-all?scope=sealed) 404s. Instead we mount the hashed assets under
+# /static and add a catch-all GET that serves the requested build file when it
+# exists, else index.html so React Router handles the route. Registered LAST so
+# every explicit API route above wins (FastAPI matches in registration order).
 _FRONTEND_BUILD = Path(__file__).resolve().parent.parent / "frontend" / "build"
 if _FRONTEND_BUILD.is_dir():
-    app.mount("/", StaticFiles(directory=str(_FRONTEND_BUILD), html=True), name="ui")
+    _BUILD_ROOT = _FRONTEND_BUILD.resolve()
+    _INDEX_HTML = _BUILD_ROOT / "index.html"
+    _STATIC_DIR = _BUILD_ROOT / "static"
+    if _STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        """Serve a real build file if it exists, else index.html (SPA fallback)."""
+        if full_path:
+            candidate = (_BUILD_ROOT / full_path).resolve()
+            # Path-traversal guard: candidate must stay inside the build dir.
+            if _BUILD_ROOT in candidate.parents and candidate.is_file():
+                return FileResponse(str(candidate))
+        return FileResponse(str(_INDEX_HTML))
 
 
 if __name__ == "__main__":

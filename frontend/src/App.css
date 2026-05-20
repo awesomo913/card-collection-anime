@@ -1779,3 +1779,59 @@ form button { margin-right: 10px; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ---- ETA / progress bar (text search + forecast running) ------------------ */
+.eta { margin: 10px 0; }
+.eta-bar {
+  height: 6px;
+  width: 100%;
+  background: rgba(241, 238, 249, 0.10);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.eta-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-violet));
+  border-radius: 999px;
+  transition: width 0.8s linear;
+}
+
+/* ---- Identify: Cards/Sealed destination toggle ---------------------------- */
+.destination-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+.dest-tab {
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.dest-tab:hover { color: var(--text); }
+.dest-tab.active {
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-violet));
+  color: #07050d;
+  border-color: transparent;
+}
+
+/* ---- List pages: per-game sections ---------------------------------------- */
+.game-section { margin-bottom: 22px; }
+.game-section-header {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(241, 238, 249, 0.12);
+}
+.game-section-header[data-game="magic"]  { border-bottom-color: rgba(168, 85, 247, 0.5); }
+.game-section-header[data-game="pokemon"] { border-bottom-color: rgba(255, 209, 102, 0.5); }
+.game-section-header[data-game="yugioh"]  { border-bottom-color: rgba(255, 77, 109, 0.5); }
+.game-section-count { color: var(--text-mute); font-weight: 400; font-size: 0.85rem; }

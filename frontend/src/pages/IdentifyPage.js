@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import IdentifyDropZone from '../components/IdentifyDropZone';
 import api from '../services/api';
@@ -24,6 +24,9 @@ const IdentifyPage = () => {
   const navigate = useNavigate();
   const [batch, setBatch] = useState(null);
   const [dismissed, setDismissed] = useState(new Set());
+  // Where identified picks land. Applies to BOTH photo and text results so a
+  // sealed product found by name can go to /sealed/add, not just /cards/add.
+  const [destination, setDestination] = useState('card'); // 'card' | 'sealed'
 
   // Text search-by-name state. Explicit submit (button/Enter), NOT
   // search-as-you-type — each search is a DeepSeek call, so we don't fire one
@@ -33,6 +36,19 @@ const IdentifyPage = () => {
   const [textResult, setTextResult] = useState(null);
   const [textPhase, setTextPhase] = useState('idle');  // idle | loading | done | error
   const [textError, setTextError] = useState(null);
+  const [textElapsed, setTextElapsed] = useState(0);
+
+  // Tick an elapsed-seconds counter while a search is in flight so the user
+  // sees progress against the "usually 30-90s" expectation.
+  useEffect(() => {
+    if (textPhase !== 'loading') return undefined;
+    setTextElapsed(0);
+    const started = Date.now();
+    const handle = setInterval(
+      () => setTextElapsed(Math.round((Date.now() - started) / 1000)), 1000,
+    );
+    return () => clearInterval(handle);
+  }, [textPhase]);
 
   const runTextSearch = async (e) => {
     if (e) e.preventDefault();
@@ -50,25 +66,20 @@ const IdentifyPage = () => {
     }
   };
 
-  const handleUseUrl = (url) => {
-    // Dispatch the same event AddCardPage's "📋 Paste URL" button dispatches.
-    // CatalogSearch listens for it (CatalogSearch.js useEffect at top).
-    navigate('/cards/add');
-    // Defer event dispatch a tick so CatalogSearch has mounted on the new page
-    // before we fire (otherwise the event evaporates with no listener).
+  // Route a pick into the chosen collection's add form. AddCardPage AND
+  // AddSealedPage both mount CatalogSearch, which listens for the global
+  // 'catalog-search-prefill' event — so the same plumbing works for either.
+  // Defer the dispatch a tick so the new page's CatalogSearch has mounted
+  // before the event fires (otherwise it evaporates with no listener).
+  const sendToCollection = (payload) => {
+    navigate(destination === 'sealed' ? '/sealed/add' : '/cards/add');
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('catalog-search-prefill', { detail: url }));
+      window.dispatchEvent(new CustomEvent('catalog-search-prefill', { detail: payload }));
     }, 150);
   };
 
-  const handleUseQuery = (query) => {
-    // For now, route the user to Add Card with the search box prefilled. The
-    // typed-search path in CatalogSearch will autocomplete from there.
-    navigate('/cards/add');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('catalog-search-prefill', { detail: query }));
-    }, 150);
-  };
+  const handleUseUrl = (url) => sendToCollection(url);
+  const handleUseQuery = (query) => sendToCollection(query);
 
   return (
     <section className="identify-page">
@@ -76,9 +87,31 @@ const IdentifyPage = () => {
       <p className="muted">
         Drop a stack of photos. The Pi sends each through DeepSeek (server-side,
         with the key never reaching this browser) and returns ranked guesses.
-        Click <strong>Use URL</strong> on any guess to send it through the
-        normal add-card flow.
+        Click <strong>Use URL</strong> on any guess to send it into your
+        collection.
       </p>
+
+      <div className="destination-toggle" role="radiogroup" aria-label="Add identified picks to">
+        <span className="muted">Add picks to:</span>
+        <button
+          type="button"
+          className={`dest-tab${destination === 'card' ? ' active' : ''}`}
+          role="radio"
+          aria-checked={destination === 'card'}
+          onClick={() => setDestination('card')}
+        >
+          Cards
+        </button>
+        <button
+          type="button"
+          className={`dest-tab${destination === 'sealed' ? ' active' : ''}`}
+          role="radio"
+          aria-checked={destination === 'sealed'}
+          onClick={() => setDestination('sealed')}
+        >
+          Sealed
+        </button>
+      </div>
 
       <IdentifyDropZone mode="batch" onResults={setBatch} />
 
@@ -161,6 +194,20 @@ const IdentifyPage = () => {
             {textPhase === 'loading' ? 'Searching…' : 'Search'}
           </button>
         </form>
+
+        {textPhase === 'loading' && (
+          <div className="eta">
+            <div className="eta-bar">
+              <div
+                className="eta-bar-fill"
+                style={{ width: `${Math.min(95, (textElapsed / 75) * 100)}%` }}
+              />
+            </div>
+            <span className="muted">
+              Searching… {textElapsed}s · DeepSeek reasoning usually takes 30-90s
+            </span>
+          </div>
+        )}
 
         {textPhase === 'error' && <div className="error">{textError}</div>}
 

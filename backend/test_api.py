@@ -42,10 +42,27 @@ def client():
 
 # ---- Root ------------------------------------------------------------------
 
-def test_root(client):
-    res = client.get("/")
+def test_api_root(client):
+    """The JSON API root lives at /api. ('/' serves the SPA when a build exists.)"""
+    res = client.get("/api")
     assert res.status_code == 200
     assert res.json() == {"message": "Card Collection API"}
+
+
+def test_spa_fallback_serves_index_for_client_routes(client):
+    """When a frontend build is present, a client route like /sealed must return
+    the SPA index.html (HTML, 200) so React Router can handle it on refresh —
+    not a 404. Skips when no build dir is present (pure-API test env)."""
+    import main
+    if not main._FRONTEND_BUILD.is_dir():
+        import pytest
+        pytest.skip("no frontend build present in this environment")
+    res = client.get("/sealed")
+    assert res.status_code == 200
+    assert "text/html" in res.headers.get("content-type", "")
+    # API routes still win over the catch-all.
+    assert client.get("/cards/").status_code == 200
+    assert isinstance(client.get("/cards/").json(), list)
 
 
 # ---- Card CRUD -------------------------------------------------------------
@@ -1426,10 +1443,11 @@ def test_create_card_with_external_id_uses_catalog_price(client, monkeypatch):
     catalog-derived TCGplayer price even with no provider creds."""
     from providers import catalog as catalog_module
 
-    # Force the catalog refresh path to return a known price.
+    # Force the catalog refresh path to return a known price. Accept any extra
+    # kwargs (set_name, tcgplayer_product_id) the production caller now passes.
     monkeypatch.setattr(
         catalog_module, "fetch_tcgplayer_price",
-        lambda source, ext_id, is_foil=False: 99.99,
+        lambda *a, **k: 99.99,
     )
 
     res = client.post("/cards/", json={
@@ -1535,3 +1553,84 @@ def test_identify_text_handles_parse_failure(client, monkeypatch):
     assert body["candidates"] == []
     assert body["error"] and "unparseable" in body["error"].lower()
     assert body["source_filename"] == "charizard"
+
+
+# ----- game detection (for group-by-game) -----------------------------------
+
+def test_game_from_product_line_mapping():
+    """TCGplayer productLineName → our game tag."""
+    from providers.catalog import game_from_product_line as g
+    assert g("YuGiOh") == "yugioh"
+    assert g("Yu-Gi-Oh!") == "yugioh"
+    assert g("Pokemon") == "pokemon"
+    assert g("Pokémon") == "pokemon"
+    assert g("Magic") == "magic"
+    assert g("Magic: The Gathering") == "magic"
+    assert g(None) is None
+    assert g("Flesh and Blood") is None  # unsupported line → None (falls back to slug)
+
+
+def test_game_from_slug():
+    from providers.catalog import game_from_slug as g
+    assert g("yugioh-rarity-collection-5-dark-magician") == "yugioh"
+    assert g("pokemon-sv-prismatic-evolutions-glaceon") == "pokemon"
+    assert g("magic-mh3-something") == "magic"
+    assert g("") is None
+    assert g("randomword-foo") is None
+
+
+def test_resolve_tcgplayer_url_sets_game_from_product_line(client, monkeypatch):
+    """A YGO TCGplayer URL resolve now carries game='yugioh' so the saved item
+    is grouped correctly instead of defaulting to magic."""
+    class Resp:
+        def __init__(self, status, payload):
+            self.status_code = status
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    seq = iter([
+        Resp(404, {"object": "error"}),                      # Scryfall miss (not Magic)
+        Resp(200, {
+            "marketPrice": 9.72,
+            "productName": "Dark Magician (Starlight Rare)",
+            "productLineName": "YuGiOh",
+            "rarityName": "Starlight Rare",
+            "setName": "Battles of Legend: Armageddon",
+        }),
+    ])
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(
+        catalog_module, "request_with_backoff",
+        lambda *a, **kw: next(seq, Resp(404, {})),
+    )
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://www.tcgplayer.com/product/687196/"
+                       "yugioh-battles-of-legend-armageddon-dark-magician-starlight-rare"},
+    )
+    assert res.status_code == 200
+    assert res.json()["game"] == "yugioh"
+
+
+def test_scryfall_resolve_sets_game_magic(client, monkeypatch):
+    """A Scryfall resolve tags game='magic'."""
+    fake_card = {
+        "id": "scry-uuid", "name": "Lightning Bolt",
+        "set_name": "Limited Edition Alpha",
+        "image_uris": {"small": "https://example.test/bolt.jpg"},
+        "prices": {"usd": "300.00", "usd_foil": None}, "rarity": "common",
+    }
+
+    class FakeResp:
+        status_code = 200
+        def json(self): return fake_card
+
+    from providers import catalog as catalog_module
+    monkeypatch.setattr(catalog_module, "request_with_backoff", lambda *a, **kw: FakeResp())
+    res = client.get(
+        "/catalog/resolve",
+        params={"url": "https://scryfall.com/card/lea/161/lightning-bolt"},
+    )
+    assert res.status_code == 200
+    assert res.json()["game"] == "magic"

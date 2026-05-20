@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import TileCard from '../components/TileCard';
+import { groupByGame } from '../utils/groupByGame';
 
 /* --------------------------------------------------------------------------
  * CardListPage — view + sort + filter the user's card collection.
@@ -316,11 +317,19 @@ const CardListPage = () => {
           to see your full collection.
         </p>
       ) : (
-        <div className="card-grid">
-          {filtered.map((c) => (
-            <TileCard key={c.id} item={c} onDelete={handleDelete} />
-          ))}
-        </div>
+        groupByGame(filtered).map((section) => (
+          <div key={section.key} className="game-section">
+            <h3 className="game-section-header" data-game={section.key}>
+              {section.label}{' '}
+              <span className="game-section-count">({section.items.length})</span>
+            </h3>
+            <div className="card-grid">
+              {section.items.map((c) => (
+                <TileCard key={c.id} item={c} onDelete={handleDelete} />
+              ))}
+            </div>
+          </div>
+        ))
       )}
     </section>
   );

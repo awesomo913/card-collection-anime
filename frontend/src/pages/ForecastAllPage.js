@@ -38,6 +38,18 @@ const directionArrow = (direction) => ({
   up: '↑', down: '↓', flat: '→', unknown: '?',
 }[direction] || '?');
 
+// Effective per-item wall-clock observed on the Pi (~9.6s; DeepSeek appears to
+// rate-limit per key so the 4-wide pool doesn't give a full 4x). Used only to
+// set expectations on the running screen — the batch endpoint isn't streaming.
+const SECONDS_PER_ITEM = 10;
+
+const fmtDuration = (sec) => {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+};
+
 const SCOPE_TITLES = {
   all: 'Forecast All',
   card: 'Forecast All Cards',
@@ -161,10 +173,22 @@ const ForecastAllPage = () => {
         <ScopeToggle current={scope} />
         <div className="forecast-running">
           <div className="spinner" />
-          <p>Forecasting {itemCount} item{itemCount === 1 ? '' : 's'}… {elapsedSec}s</p>
+          <p>Forecasting {itemCount} item{itemCount === 1 ? '' : 's'}…</p>
+          <div className="eta-bar">
+            <div
+              className="eta-bar-fill"
+              style={{
+                width: `${Math.min(95, (elapsedSec / Math.max(8, itemCount * SECONDS_PER_ITEM)) * 100)}%`,
+              }}
+            />
+          </div>
           <p className="muted">
-            Cold-cache runs take 5-15s per item, fanned out 4-wide on the Pi.
-            Cached re-runs finish in under a second.
+            {fmtDuration(elapsedSec)} elapsed · estimated ~
+            {fmtDuration(Math.max(8, itemCount * SECONDS_PER_ITEM))} total
+          </p>
+          <p className="muted">
+            ~10s per item, fanned out 4-wide on the Pi. Cached re-runs finish in
+            under a second.
           </p>
         </div>
       </section>

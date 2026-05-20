@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import TileCard from '../components/TileCard';
+import { groupByGame } from '../utils/groupByGame';
 
 const SealedListPage = () => {
   const [items, setItems] = useState([]);
@@ -76,11 +77,19 @@ const SealedListPage = () => {
           No sealed products yet. <Link to="/sealed/add">Add your first one</Link>.
         </p>
       ) : (
-        <div className="sealed-grid">
-          {filtered.map((s) => (
-            <TileCard key={s.id} item={s} onDelete={handleDelete} />
-          ))}
-        </div>
+        groupByGame(filtered).map((section) => (
+          <div key={section.key} className="game-section">
+            <h3 className="game-section-header" data-game={section.key}>
+              {section.label}{' '}
+              <span className="game-section-count">({section.items.length})</span>
+            </h3>
+            <div className="sealed-grid">
+              {section.items.map((s) => (
+                <TileCard key={s.id} item={s} onDelete={handleDelete} />
+              ))}
+            </div>
+          </div>
+        ))
       )}
     </section>
   );

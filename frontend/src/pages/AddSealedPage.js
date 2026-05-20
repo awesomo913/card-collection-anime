@@ -55,7 +55,8 @@ const AddSealedPage = () => {
       ...prev,
       name: result.name || prev.name,
       set_name: result.set_name || prev.set_name,
-      game: sourceToGame[result.external_source] || prev.game,
+      // Prefer backend-detected game (TCGplayer productLineName aware).
+      game: result.game || sourceToGame[result.external_source] || prev.game,
       external_source: result.external_source,
       external_id: result.external_id,
       image_url: result.image_url || null,
