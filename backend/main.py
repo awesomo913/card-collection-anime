@@ -249,7 +249,15 @@ def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     """Return historical prices for a given item from all sources."""
     hist = crud.get_price_history_for_item(db=db, item_type=item_type, item_id=item_id)
     return [
-        {"source": h.source, "price": h.price, "timestamp": h.timestamp}
+        {
+            "source": h.source,
+            "price": h.price,
+            "price_low": h.price_low,
+            "price_mid": h.price_mid,
+            "price_high": h.price_high,
+            "price_market": h.price_market,
+            "timestamp": h.timestamp,
+        }
         for h in hist
     ]
 

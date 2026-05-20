@@ -73,4 +73,11 @@ class PriceHistory(Base):
     item_id = Column(Integer)
     source = Column(String)
     price = Column(Float)
+    # Per-tier prices when the source exposes them (TCGPlayer carries all four;
+    # eBay/CardMarket leave them null). Nullable so the boot self-heal can ALTER
+    # them onto an existing DB and pre-tier rows stay valid.
+    price_low = Column(Float, nullable=True)
+    price_mid = Column(Float, nullable=True)
+    price_high = Column(Float, nullable=True)
+    price_market = Column(Float, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())

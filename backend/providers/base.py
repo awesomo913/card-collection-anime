@@ -28,6 +28,9 @@ class ProviderResult:
     source: str
     price: Optional[float]
     raw: Optional[dict] = None
+    # Per-tier prices when the source exposes them (TCGPlayer: low/mid/high/market).
+    # None for sources that only return a single aggregate price.
+    tiers: Optional[dict] = None
 
 
 class PriceProvider(Protocol):

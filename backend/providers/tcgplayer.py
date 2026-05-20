@@ -109,12 +109,30 @@ class TCGPlayerProvider:
             if entry.get("subTypeName") == target_subtype:
                 price = entry.get("marketPrice") or entry.get("midPrice") or entry.get("lowPrice")
                 if price is not None:
-                    return ProviderResult(self.name, float(price), raw=entry)
+                    return ProviderResult(
+                        self.name, float(price), raw=entry, tiers=_tiers_from_entry(entry)
+                    )
 
         # Fallback: first non-null price
         for entry in results:
             price = entry.get("marketPrice") or entry.get("midPrice") or entry.get("lowPrice")
             if price is not None:
-                return ProviderResult(self.name, float(price), raw=entry)
+                return ProviderResult(
+                    self.name, float(price), raw=entry, tiers=_tiers_from_entry(entry)
+                )
 
         return ProviderResult(self.name, None)
+
+
+def _tiers_from_entry(entry: dict) -> dict:
+    """Map a TCGPlayer pricing entry to our tier dict. Missing tiers are None."""
+    def _f(key: str) -> Optional[float]:
+        val = entry.get(key)
+        return float(val) if val is not None else None
+
+    return {
+        "low": _f("lowPrice"),
+        "mid": _f("midPrice"),
+        "high": _f("highPrice"),
+        "market": _f("marketPrice"),
+    }

@@ -188,27 +188,56 @@ def _compute_source_agreement(
     }
 
 
+def _latest_tier_spread(history: List[models.PriceHistory]) -> Optional[float]:
+    """Bid/ask width from the most recent row carrying low/mid/high tiers.
+
+    Returns ``(high - low) / mid`` for the newest tiered row, or None when no
+    row carries a full tier set (e.g. eBay-only history, or pre-tier rows).
+    History is sorted oldest->newest, so we scan from the end.
+    """
+    for row in reversed(history):
+        low = getattr(row, "price_low", None)
+        mid = getattr(row, "price_mid", None)
+        high = getattr(row, "price_high", None)
+        if low is not None and mid and high is not None and mid > 0:
+            return (high - low) / mid
+    return None
+
+
 def _rubric_confidence_ceiling(
     metrics: Dict[str, float],
     agreement: Dict[str, object],
+    tier_spread: Optional[float] = None,
 ) -> float:
     """Hard ceiling on per-horizon confidence given the computed signals.
 
     Matches the rubric in SYSTEM_PROMPT — kept here as the enforcement layer
     because the model occasionally over-claims even when told the rules.
     Worst-tier-wins: the lowest ceiling triggered fires.
+
+    ``tier_spread`` (TCGPlayer low->high width relative to mid) is an extra
+    volatility dampener: a wide bid/ask band signals an illiquid / uncertain
+    market even when the historical series looks calm.
     """
     n = metrics["sample_count"]
     cv = metrics["cv"]
     days = metrics["days_covered"]
     band = agreement["agreement_band"]
     if n < 5 or days < 3:
-        return 0.2
-    if n < 10 or cv >= 0.20 or band == "wide":
-        return 0.3
-    if n < 20 or cv > 0.08 or band == "unknown":
-        return 0.7
-    return 1.0
+        ceiling = 0.2
+    elif n < 10 or cv >= 0.20 or band == "wide":
+        ceiling = 0.3
+    elif n < 20 or cv > 0.08 or band == "unknown":
+        ceiling = 0.7
+    else:
+        ceiling = 1.0
+
+    if tier_spread is not None:
+        if tier_spread >= 1.0:
+            ceiling = min(ceiling, 0.3)
+        elif tier_spread >= 0.5:
+            ceiling = min(ceiling, 0.7)
+    return ceiling
 
 
 def _format_derived_signals(
@@ -444,7 +473,8 @@ def forecast_item(
     serialised_history = _serialise_history(history)
     metrics = _compute_history_metrics(serialised_history)
     agreement = _compute_source_agreement(getattr(item, "price_sources", None))
-    confidence_ceiling = _rubric_confidence_ceiling(metrics, agreement)
+    tier_spread = _latest_tier_spread(history)
+    confidence_ceiling = _rubric_confidence_ceiling(metrics, agreement, tier_spread)
 
     user_prompt = _build_user_prompt(
         item_name=item.name,

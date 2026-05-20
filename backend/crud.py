@@ -141,14 +141,29 @@ def get_price_history_for_item(db: Session, item_type: str, item_id: int):
         .all()
     )
 
-def log_price_history(db: Session, item_type: str, item_id: int, source: str, price: float, ts: Optional[datetime] = None):
-    # Log a single price snapshot for an item from a given source
+def log_price_history(
+    db: Session,
+    item_type: str,
+    item_id: int,
+    source: str,
+    price: float,
+    ts: Optional[datetime] = None,
+    tiers: Optional[dict] = None,
+):
+    # Log a single price snapshot for an item from a given source. ``tiers``
+    # (low/mid/high/market) is stored when the source provides it; otherwise
+    # the tier columns stay null.
     price_timestamp = ts or datetime.utcnow()
+    tiers = tiers or {}
     history = models.PriceHistory(
         item_type=item_type,
         item_id=item_id,
         source=source,
         price=price,
+        price_low=tiers.get("low"),
+        price_mid=tiers.get("mid"),
+        price_high=tiers.get("high"),
+        price_market=tiers.get("market"),
         timestamp=price_timestamp,
     )
     db.add(history)

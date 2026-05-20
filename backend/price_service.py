@@ -5,7 +5,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from database import SessionLocal
 from providers import PriceQuery, catalog, get_enabled_providers
@@ -48,10 +48,17 @@ def _mock_sealed_prices(
     return {src: round(anchor * mult, 2) for src, mult in _MOCK_SOURCE_OFFSETS.items()}
 
 
-def _aggregate(query: PriceQuery, mock_fn) -> Dict[str, float]:
-    """Run all configured providers; fall back to mocks if no live data."""
+def _aggregate(query: PriceQuery, mock_fn) -> Tuple[Dict[str, float], Dict[str, dict]]:
+    """Run all configured providers; fall back to mocks if no live data.
+
+    Returns ``(prices_by_source, tiers_by_source)``. ``tiers_by_source`` only
+    carries sources that expose per-tier prices (TCGPlayer low/mid/high/market);
+    it is empty for sources that return a single aggregate price and on mock
+    fallback.
+    """
     providers = get_enabled_providers()
     out: Dict[str, float] = {}
+    tiers: Dict[str, dict] = {}
     for provider in providers:
         try:
             result = provider.fetch(query)
@@ -60,9 +67,11 @@ def _aggregate(query: PriceQuery, mock_fn) -> Dict[str, float]:
             continue
         if result and result.price is not None:
             out[result.source] = round(float(result.price), 2)
+            if getattr(result, "tiers", None):
+                tiers[result.source] = result.tiers
     if out:
-        return out
-    return mock_fn()
+        return out, tiers
+    return mock_fn(), {}
 
 
 def fetch_card_prices_all_sources(
@@ -74,7 +83,27 @@ def fetch_card_prices_all_sources(
     external_id: Optional[str] = None,
     tcgplayer_product_id: Optional[str] = None,
 ) -> Dict[str, float]:
-    """Aggregate prices for a card.
+    """Aggregate prices for a card (source -> price). See the detailed variant
+    for the full contract; this thin wrapper drops the tier data for callers
+    that only need the per-source prices."""
+    prices, _ = fetch_card_prices_all_sources_detailed(
+        name, set_name, game, is_foil,
+        external_source=external_source, external_id=external_id,
+        tcgplayer_product_id=tcgplayer_product_id,
+    )
+    return prices
+
+
+def fetch_card_prices_all_sources_detailed(
+    name: str,
+    set_name: str,
+    game: str,
+    is_foil: bool = False,
+    external_source: Optional[str] = None,
+    external_id: Optional[str] = None,
+    tcgplayer_product_id: Optional[str] = None,
+) -> Tuple[Dict[str, float], Dict[str, dict]]:
+    """Aggregate prices for a card, returning ``(prices, tiers_by_source)``.
 
     When the card was linked to a public catalog (Scryfall / PokemonTCG.io / YGOPRODeck)
     we trust that source for the TCGPlayer price — it is keyed by an exact catalog ID
@@ -83,8 +112,13 @@ def fetch_card_prices_all_sources(
     ``tcgplayer_product_id`` is preferred over the per-game catalog because TCGplayer's
     ``marketPrice`` is per-printing, while per-game catalogs sometimes carry zero or
     aggregate-only prices (Yu-Gi-Oh! Starlight Rare being the canonical example).
+
+    ``tiers_by_source`` carries low/mid/high/market only for sources that expose
+    them (the live TCGPlayer provider). The catalog-derived TCGPlayer price is a
+    single value with no tiers.
     """
     out: Dict[str, float] = {}
+    tiers: Dict[str, dict] = {}
     if (external_source and external_id) or tcgplayer_product_id:
         catalog_price = catalog.fetch_tcgplayer_price(
             external_source or "",
@@ -109,15 +143,27 @@ def fetch_card_prices_all_sources(
             continue
         if result and result.price is not None:
             out[result.source] = round(float(result.price), 2)
+            if getattr(result, "tiers", None):
+                tiers[result.source] = result.tiers
 
     if out:
-        return out
-    return _mock_card_prices(name, set_name, game, is_foil)
+        return out, tiers
+    return _mock_card_prices(name, set_name, game, is_foil), {}
 
 
 def fetch_sealed_prices_all_sources(
     name: str, set_name: str, product_type: str, game: str
 ) -> Dict[str, float]:
+    prices, _ = fetch_sealed_prices_all_sources_detailed(
+        name, set_name, product_type, game
+    )
+    return prices
+
+
+def fetch_sealed_prices_all_sources_detailed(
+    name: str, set_name: str, product_type: str, game: str
+) -> Tuple[Dict[str, float], Dict[str, dict]]:
+    """Aggregate sealed prices, returning ``(prices, tiers_by_source)``."""
     query = PriceQuery(
         name=name,
         set_name=set_name,
@@ -211,20 +257,21 @@ def update_all_prices() -> None:
     # for sub-day cadence (4×/day).
     def _fetch_one_card(snap: Dict) -> Optional[tuple]:
         try:
-            prices = fetch_card_prices_all_sources(
+            prices, tiers = fetch_card_prices_all_sources_detailed(
                 snap["name"], snap["set_name"], snap["game"], snap["is_foil"],
                 external_source=snap["external_source"],
                 external_id=snap["external_id"],
                 tcgplayer_product_id=snap["tcgplayer_product_id"],
             )
-            return (snap["id"], prices)
+            return (snap["id"], prices, tiers)
         except Exception as exc:  # noqa: BLE001 — one bad card shouldn't kill the batch
             logger.exception("Price fetch failed for card %s: %s", snap["id"], exc)
             return None
 
     def _fetch_one_sealed(snap: Dict) -> Optional[tuple]:
         try:
-            return (snap["id"], _resolve_sealed_prices(snap))
+            prices, tiers = _resolve_sealed_prices_detailed(snap)
+            return (snap["id"], prices, tiers)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Price fetch failed for sealed %s: %s", snap["id"], exc)
             return None
@@ -238,21 +285,26 @@ def update_all_prices() -> None:
             for result in pool.map(_fetch_one_card, card_snaps):
                 if result is None:
                     continue
-                card_id, prices = result
-                _persist_card_prices(card_id, prices, now, log_price_history)
+                card_id, prices, tiers = result
+                _persist_card_prices(card_id, prices, tiers, now, log_price_history)
 
     if sealed_snaps:
         with ThreadPoolExecutor(max_workers=_MAX_REFRESH_WORKERS) as pool:
             for result in pool.map(_fetch_one_sealed, sealed_snaps):
                 if result is None:
                     continue
-                sealed_id, prices = result
-                _persist_sealed_prices(sealed_id, prices, now, log_price_history)
+                sealed_id, prices, tiers = result
+                _persist_sealed_prices(sealed_id, prices, tiers, now, log_price_history)
 
 
-def _resolve_sealed_prices(snap: Dict) -> Dict[str, float]:
-    """Per-row sealed price resolution. Pure function — no DB."""
+def _resolve_sealed_prices_detailed(snap: Dict) -> Tuple[Dict[str, float], Dict[str, dict]]:
+    """Per-row sealed price resolution. Pure function — no DB.
+
+    Returns ``(prices, tiers_by_source)``. The catalog-derived TCGPlayer price
+    carries no tiers; tiers only come from the live aggregate path.
+    """
     prices: Dict[str, float] = {}
+    tiers: Dict[str, dict] = {}
     if (snap["external_source"] and snap["external_id"]) or snap["tcgplayer_product_id"]:
         catalog_price = catalog.fetch_tcgplayer_price(
             snap["external_source"] or "", snap["external_id"] or "",
@@ -263,13 +315,13 @@ def _resolve_sealed_prices(snap: Dict) -> Dict[str, float]:
         if catalog_price is not None:
             prices["TCGPlayer"] = round(float(catalog_price), 2)
     if not prices:
-        prices = fetch_sealed_prices_all_sources(
+        prices, tiers = fetch_sealed_prices_all_sources_detailed(
             snap["name"], snap["set_name"], snap["product_type"], snap["game"]
         )
-    return prices
+    return prices, tiers
 
 
-def _persist_card_prices(card_id: int, prices: Dict[str, float], now: datetime, log_price_history) -> None:
+def _persist_card_prices(card_id: int, prices: Dict[str, float], tiers_by_source: Dict[str, dict], now: datetime, log_price_history) -> None:
     """Open a short transaction, write the result, close. Yields between cards."""
     with SessionLocal() as db:
         card = db.query(models.Card).filter(models.Card.id == card_id).first()
@@ -278,7 +330,8 @@ def _persist_card_prices(card_id: int, prices: Dict[str, float], now: datetime, 
             return
         for source, price in prices.items():
             try:
-                log_price_history(db, "card", card.id, source, price, ts=now)
+                log_price_history(db, "card", card.id, source, price, ts=now,
+                                  tiers=tiers_by_source.get(source))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PriceHistory write failed (card %s): %s", card.id, exc)
         card.current_price = (
@@ -289,7 +342,7 @@ def _persist_card_prices(card_id: int, prices: Dict[str, float], now: datetime, 
         db.commit()
 
 
-def _persist_sealed_prices(sealed_id: int, prices: Dict[str, float], now: datetime, log_price_history) -> None:
+def _persist_sealed_prices(sealed_id: int, prices: Dict[str, float], tiers_by_source: Dict[str, dict], now: datetime, log_price_history) -> None:
     with SessionLocal() as db:
         sealed = db.query(models.SealedProduct).filter(
             models.SealedProduct.id == sealed_id
@@ -299,7 +352,8 @@ def _persist_sealed_prices(sealed_id: int, prices: Dict[str, float], now: dateti
             return
         for source, price in prices.items():
             try:
-                log_price_history(db, "sealed", sealed.id, source, price, ts=now)
+                log_price_history(db, "sealed", sealed.id, source, price, ts=now,
+                                  tiers=tiers_by_source.get(source))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PriceHistory write failed (sealed %s): %s", sealed.id, exc)
         sealed.current_price = (

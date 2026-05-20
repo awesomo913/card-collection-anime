@@ -223,6 +223,155 @@ def test_tcgplayer_provider_off_when_no_keys(monkeypatch):
     assert TCGPlayerProvider().is_enabled() is False
 
 
+def test_tcgplayer_fetch_captures_low_mid_high_market_tiers(monkeypatch):
+    """TCGPlayer's pricing entry carries low/mid/high/market — capture all four,
+    not just the single market price."""
+    monkeypatch.setenv("TCGPLAYER_CLIENT_ID", "id")
+    monkeypatch.setenv("TCGPLAYER_CLIENT_SECRET", "secret")
+    from providers import tcgplayer as tcg
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def fake_request(method, url, **kw):
+        if url.endswith("/token"):
+            return FakeResp({"access_token": "tok", "expires_in": 3600})
+        if "/search" in url:
+            return FakeResp({"results": [12345]})
+        if "/pricing/product/" in url:
+            return FakeResp({"results": [{
+                "subTypeName": "Normal",
+                "lowPrice": 1.0, "midPrice": 2.0,
+                "highPrice": 4.0, "marketPrice": 2.5,
+            }]})
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(tcg, "request_with_backoff", fake_request)
+
+    result = tcg.TCGPlayerProvider().fetch(
+        PriceQuery(name="Black Lotus", set_name="Alpha", game="magic")
+    )
+    assert result.price == 2.5  # market unchanged
+    assert result.tiers == {"low": 1.0, "mid": 2.0, "high": 4.0, "market": 2.5}
+
+
+def test_log_price_history_persists_tiers(client):
+    """log_price_history accepts a tiers dict and stores per-tier columns."""
+    import crud
+    import database
+    with database.SessionLocal() as db:
+        row = crud.log_price_history(
+            db, "card", 999001, "TCGPlayer", 2.5,
+            tiers={"low": 1.0, "mid": 2.0, "high": 4.0, "market": 2.5},
+        )
+        assert row.price_low == 1.0
+        assert row.price_mid == 2.0
+        assert row.price_high == 4.0
+        assert row.price_market == 2.5
+
+
+def test_log_price_history_tiers_optional(client):
+    """tiers is optional — omitting it leaves tier columns null (no regression)."""
+    import crud
+    import database
+    with database.SessionLocal() as db:
+        row = crud.log_price_history(db, "card", 999002, "eBay", 9.0)
+        assert row.price == 9.0
+        assert row.price_low is None
+        assert row.price_market is None
+
+
+def test_refresh_persists_tcgplayer_tiers(client, monkeypatch):
+    """The scheduler refresh threads provider tiers into PriceHistory rows."""
+    import crud
+    import database
+    import price_service
+    from providers.base import ProviderResult
+
+    res = client.post("/cards/", json={
+        "name": "Tier Test Card", "set_name": "TierSet", "game": "magic",
+    })
+    cid = res.json()["id"]
+
+    class FakeTCG:
+        name = "TCGPlayer"
+
+        def fetch(self, query):
+            return ProviderResult(
+                "TCGPlayer", 2.5,
+                tiers={"low": 1.0, "mid": 2.0, "high": 4.0, "market": 2.5},
+            )
+
+    monkeypatch.setattr(price_service, "get_enabled_providers", lambda: [FakeTCG()])
+    price_service.update_all_prices()
+
+    with database.SessionLocal() as db:
+        rows = crud.get_price_history_for_item(db, "card", cid)
+    tcg = [r for r in rows if r.source == "TCGPlayer"]
+    assert tcg, "expected a TCGPlayer history row"
+    assert tcg[-1].price_low == 1.0
+    assert tcg[-1].price_high == 4.0
+    assert tcg[-1].price_market == 2.5
+
+
+def test_price_history_endpoint_exposes_tiers(client):
+    """The /price-history endpoint surfaces per-tier prices when present."""
+    import crud
+    import database
+    with database.SessionLocal() as db:
+        crud.log_price_history(
+            db, "card", 999100, "TCGPlayer", 2.5,
+            tiers={"low": 1.0, "mid": 2.0, "high": 4.0, "market": 2.5},
+        )
+    res = client.get("/price-history/card/999100")
+    assert res.status_code == 200
+    rows = res.json()
+    assert rows, "expected at least one history row"
+    row = rows[-1]
+    assert row["price_low"] == 1.0
+    assert row["price_mid"] == 2.0
+    assert row["price_high"] == 4.0
+    assert row["price_market"] == 2.5
+
+
+def test_tier_spread_lowers_confidence_ceiling():
+    """A wide TCGPlayer low->high band dampens the confidence ceiling even when
+    the historical series looks calm."""
+    from forecast_service import _rubric_confidence_ceiling
+    metrics = {"sample_count": 30, "cv": 0.02, "days_covered": 60.0}
+    agreement = {"agreement_band": "tight"}
+    # Calm history + no tier data => full confidence allowed.
+    assert _rubric_confidence_ceiling(metrics, agreement) == 1.0
+    # Tight tier band => unchanged.
+    assert _rubric_confidence_ceiling(metrics, agreement, tier_spread=0.1) == 1.0
+    # Wide band => capped to 0.7.
+    assert _rubric_confidence_ceiling(metrics, agreement, tier_spread=0.6) == 0.7
+    # Very wide band => heavily capped to 0.3.
+    assert _rubric_confidence_ceiling(metrics, agreement, tier_spread=1.5) == 0.3
+
+
+def test_latest_tier_spread_from_history():
+    """_latest_tier_spread reads the most recent row carrying all of low/mid/high."""
+    from forecast_service import _latest_tier_spread
+
+    class Row:
+        def __init__(self, low, mid, high):
+            self.price_low, self.price_mid, self.price_high = low, mid, high
+
+    # No tiered rows => None.
+    assert _latest_tier_spread([Row(None, None, None)]) is None
+    # (high-low)/mid = (4-1)/2 = 1.5; latest row wins.
+    rows = [Row(1.0, 2.0, 4.0), Row(1.8, 2.0, 2.2)]
+    assert _latest_tier_spread(rows) == pytest.approx(0.2)
+
+
 # ---- Catalog search --------------------------------------------------------
 
 def test_catalog_search_validates_game(client):
