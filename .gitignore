@@ -37,3 +37,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Runtime logs + camera-check snapshots (diagnostic output, not source)
+logs/
+*.log
+camera_check_last.png

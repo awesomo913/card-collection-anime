@@ -290,3 +290,111 @@ class EbayListingsResponse(BaseModel):
     enabled: bool
     listings: List[EbayListing]
     summary: Optional[EbaySummary] = None
+
+
+# ----- /scan endpoints (Pi-camera card + rarity scanner) -------------------
+#
+# Why rarity is its own pipeline: the SAME Yu-Gi-Oh card prints in 8+ rarities
+# (esp. the Rarity Collection sets) at wildly different prices, and the only
+# reliable discriminator is how the foil behaves under tilt. /identify gives us
+# the card NAME; /scan adds the RARITY (which then unlocks the correct price).
+
+# Canonical rarity strings used in the DeepSeek rubric and for snapping the
+# model's answer. These mirror YGOPRODeck's ``set_rarity`` spellings as closely
+# as possible; the price matcher fuzzy-compares the chosen rarity against the
+# real ``card_sets`` entries at lookup time, so minor spelling drift is tolerated.
+RARITY_VOCAB: List[str] = [
+    "Common",
+    "Rare",
+    "Super Rare",
+    "Ultra Rare",
+    "Secret Rare",
+    "Ultimate Rare",
+    "Collector's Rare",
+    "Ghost Rare",
+    "Gold Rare",
+    "Starlight Rare",
+    "Quarter Century Secret Rare",
+    "Platinum Secret Rare",
+    "Prismatic Secret Rare",
+    "Prismatic Ultimate Rare",
+    "Prismatic Collector's Rare",
+]
+
+
+class RarityMeasurements(BaseModel):
+    """Deterministic scalars the OpenCV layer extracts from the tilt burst.
+
+    All fields are Optional → None: any one measure can fail (bad rectify,
+    blur, lighting) without sinking the rest, and off-Pi (no OpenCV) every
+    field is None and the rarity decision degrades to vision-only.
+    """
+    foil_line_angle_deg: Optional[float] = None   # dominant foil-line angle, 0=horizontal
+    foil_line_strength: Optional[float] = None     # FFT peak/mean ratio (how line-y the foil is)
+    sparkle_density: Optional[float] = None        # fraction of pixels in the top-luminance mask
+    sparkle_motion: Optional[float] = None         # how much the sparkle mask shifts across frames
+    name_region_hue: Optional[float] = None        # median hue (deg) of the title band
+    name_is_champagne_gold: Optional[bool] = None  # title band reads as champagne-gold
+    frame_varnish_energy: Optional[float] = None   # Laplacian-variance ratio frame-vs-art (raised varnish)
+    border_dazzle_score: Optional[float] = None    # local variance of the black border (dazzle pattern)
+    rectified: bool = False                        # True when a clean card quad was found + warped
+
+
+class RarityResult(BaseModel):
+    """The rarity decision for one scan.
+
+    ``method`` records HOW we decided so the UI (and later auto-add logic) can
+    weight it: "hybrid" = CV measures + DeepSeek, "vision_only" = DeepSeek with
+    no CV, "cv_only" = rule fallback when DeepSeek was unavailable.
+    """
+    rarity: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    alternatives: List[str] = []
+    reasoning: str = ""
+    method: Literal["hybrid", "vision_only", "cv_only", "unknown"] = "unknown"
+    measurements: Optional[RarityMeasurements] = None
+
+
+class ScanCandidate(BaseModel):
+    """The identified card (name/set), before rarity is layered on."""
+    game: str = "yugioh"
+    name: str
+    set_name: Optional[str] = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class ScanPrice(BaseModel):
+    """Previewed price for the detected rarity printing."""
+    tcgplayer_price: Optional[float] = None
+    source: Optional[str] = None  # e.g. "ygoprodeck:set_price", "tcgplayer:market"
+
+
+class ScanResult(BaseModel):
+    """Full outcome of one /scan/capture.
+
+    Never 500s — every per-stage failure (no camera, identify miss, rarity
+    error, price miss) surfaces on ``error`` with whatever partial data we got,
+    matching the /identify convention. ``ready_to_add`` is a CardCreate-shaped
+    payload the frontend posts to the EXISTING POST /cards/ to commit.
+    """
+    candidate: Optional[ScanCandidate] = None
+    rarity: Optional[RarityResult] = None
+    price: Optional[ScanPrice] = None
+    ready_to_add: Optional[CardCreate] = None
+    frames_captured: int = 0
+    error: Optional[str] = None
+
+
+class ScanRepriceRequest(BaseModel):
+    """Re-price a card for a user-overridden rarity before commit."""
+    external_id: str            # YGOPRODeck card id
+    set_name: Optional[str] = None
+    rarity: str
+    name: Optional[str] = None
+
+
+class ScanRepriceResponse(BaseModel):
+    tcgplayer_price: Optional[float] = None
+    tcgplayer_product_id: Optional[str] = None
+    set_name: Optional[str] = None
+    source: Optional[str] = None

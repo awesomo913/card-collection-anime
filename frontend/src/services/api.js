@@ -93,6 +93,20 @@ export const identifyText = (query, gameHint) =>
     timeout: 120000,
   });
 
+// ----- /scan card scanner (Pi camera) -------------------------------------
+// Live MJPEG preview URL for an <img src>. Same-origin in prod (API_BASE_URL='').
+export const scanPreviewUrl = () => `${API_BASE_URL}/scan/preview`;
+// Capture a tilt-burst → identify + rarity + price. 120s: a burst capture plus
+// two DeepSeek calls (identify across frames, then rarity) can run long.
+export const scanCapture = (gameHint = 'yugioh') =>
+  api.post('/scan/capture', null, {
+    params: gameHint ? { game_hint: gameHint } : {},
+    timeout: 120000,
+  });
+// Re-price for a user-overridden rarity before committing (no camera/DeepSeek).
+export const scanReprice = (body) =>
+  api.post('/scan/reprice', body, { timeout: 30000 });
+
 // DeepSeek-powered price forecasting. Server caches results 24h.
 export const forecastCard = (id) =>
   api.get(`/forecast/card/${id}`, { timeout: 60000 });
@@ -153,6 +167,7 @@ const apiClient = {
   exportProfile, importProfile,
   getStatus, getStatusLogs,
   identifyImage, identifyBatch, identifyVideo, identifyText,
+  scanPreviewUrl, scanCapture, scanReprice,
   forecastCard, forecastSealed, forecastBatch, forecastBatchStream,
 };
 

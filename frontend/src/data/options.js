@@ -56,6 +56,27 @@ export const RARITIES_BY_GAME = {
   ],
 };
 
+// Canonical Yu-Gi-Oh! rarity list for the /scan rarity-override dropdown.
+// Mirrors backend schemas.RARITY_VOCAB (and YGOPRODeck set_rarity spelling) so
+// an override snaps to a price-matchable rarity.
+export const RARITY_VOCAB = [
+  'Common',
+  'Rare',
+  'Super Rare',
+  'Ultra Rare',
+  'Secret Rare',
+  'Ultimate Rare',
+  "Collector's Rare",
+  'Ghost Rare',
+  'Gold Rare',
+  'Starlight Rare',
+  'Quarter Century Secret Rare',
+  'Platinum Secret Rare',
+  'Prismatic Secret Rare',
+  'Prismatic Ultimate Rare',
+  "Prismatic Collector's Rare",
+];
+
 export const PRODUCT_TYPES_BY_GAME = {
   magic: [
     'Booster Box',

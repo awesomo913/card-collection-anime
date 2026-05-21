@@ -524,6 +524,151 @@ def _pick_yugioh_printing(sets: List[Dict], target_tokens: List[str]) -> Optiona
     return scored[0][1] if scored[0][0] > 0 else sets[0]
 
 
+def _normalize_rarity(text: Optional[str]) -> str:
+    """Lowercase + collapse punctuation so 'Quarter-Century Secret Rare' and
+    "Quarter Century Secret Rare" compare equal. Drops apostrophes too
+    (Collector's -> collectors)."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _pick_yugioh_printing_by_rarity(
+    sets: List[Dict],
+    target_tokens: List[str],
+    set_rarity: Optional[str],
+) -> Optional[Dict]:
+    """Pick the card_sets entry matching the detected RARITY first, then set name.
+
+    The original ``_pick_yugioh_printing`` scores set-NAME tokens only. For a
+    Rarity Collection card that prints in 8+ rarities under the same set name,
+    that returns a near-random rarity's price. This variant scores rarity match
+    primarily (exact > substring > token-overlap) and uses set-name overlap only
+    as a tiebreaker. Falls back to the name-based pick when no rarity matches at
+    all, so behaviour is never worse than before.
+    """
+    if not sets:
+        return None
+    want = _normalize_rarity(set_rarity)
+    if not want:
+        return _pick_yugioh_printing(sets, target_tokens)
+
+    want_words = set(want.split())
+    target = set(t.lower() for t in (target_tokens or []))
+    scored = []
+    for entry in sets:
+        entry_rarity = _normalize_rarity(entry.get("set_rarity"))
+        if entry_rarity == want:
+            rscore = 3
+        elif entry_rarity and (want in entry_rarity or entry_rarity in want):
+            rscore = 2
+        elif entry_rarity and (want_words & set(entry_rarity.split())):
+            rscore = 1
+        else:
+            rscore = 0
+        name = (entry.get("set_name") or "").lower().replace("-", " ")
+        nscore = len(target & set(name.split())) if target else 0
+        scored.append((rscore, nscore, entry))
+    scored.sort(key=lambda t: (-t[0], -t[1]))
+    best_rscore, _, best_entry = scored[0]
+    if best_rscore > 0:
+        return best_entry
+    # No rarity matched any printing — don't return a wrong-rarity price; fall
+    # back to the name-based pick (same as the non-rarity-aware path).
+    return _pick_yugioh_printing(sets, target_tokens)
+
+
+def _ygoprodeck_result_for_rarity(
+    card: Dict, set_name: Optional[str], rarity: Optional[str]
+) -> Dict:
+    """Build a CatalogResult-shaped dict for ONE YGO card priced at the given
+    rarity printing. Extra keys (set_code, price_source) ride along for the
+    scanner — the Pydantic CatalogResult ignores unknown keys on the way out."""
+    sets = card.get("card_sets") or []
+    target_tokens = (set_name or "").lower().replace("-", " ").split()
+    chosen = _pick_yugioh_printing_by_rarity(sets, target_tokens, rarity)
+    chosen_rarity = (chosen or {}).get("set_rarity")
+    # Did we actually land on the requested rarity (vs a name-only fallback pick)?
+    cr, wr = _normalize_rarity(chosen_rarity), _normalize_rarity(rarity)
+    rarity_matched = bool(wr) and bool(cr) and (
+        cr == wr or wr in cr or cr in wr
+    )
+    set_price = _safe_float((chosen or {}).get("set_price"))
+    aggregate = _safe_float(
+        ((card.get("card_prices") or [{}])[0]).get("tcgplayer_price")
+    )
+    if set_price is not None:
+        price, source = set_price, "ygoprodeck:set_price"
+    elif rarity_matched:
+        # The rarity matched but its printing carries no usable price (set_price
+        # "0"/empty). Do NOT fall back to the card-wide aggregate — that's a
+        # DIFFERENT rarity's price and would silently mislead. Show "no price".
+        price, source = None, "ygoprodeck:no_price_for_rarity"
+    elif aggregate is not None:
+        # No rarity match at all → the card-wide aggregate is the best we have,
+        # flagged so the UI can show it's approximate.
+        price, source = aggregate, "ygoprodeck:aggregate"
+    else:
+        price, source = None, None
+    return {
+        "external_source": "ygoprodeck",
+        "external_id": str(card.get("id", "")),
+        "name": card.get("name", ""),
+        "set_name": (chosen or {}).get("set_name") or set_name or "",
+        "image_url": ((card.get("card_images") or [{}])[0]).get("image_url_small"),
+        "tcgplayer_price": price,
+        "tcgplayer_price_foil": None,
+        "rarity": (chosen or {}).get("set_rarity") or rarity,
+        "tcgplayer_product_id": None,
+        "game": "yugioh",
+        # scanner-only extras (not on the CatalogResult model):
+        "set_code": (chosen or {}).get("set_code"),
+        "price_source": source,
+    }
+
+
+def _fetch_ygoprodeck_card(*, card_id: Optional[str] = None,
+                           name: Optional[str] = None) -> Optional[Dict]:
+    """Fetch one raw YGOPRODeck card dict by id (exact) or name (exact, then
+    fuzzy). Returns None on miss. Preserves card_sets for rarity pricing."""
+    params: Dict[str, str]
+    if card_id and str(card_id).isdigit():
+        params = {"id": str(card_id)}
+    elif name:
+        params = {"name": name}  # exact-name first
+    else:
+        return None
+    resp = request_with_backoff(
+        "GET", "https://db.ygoprodeck.com/api/v7/cardinfo.php",
+        params=params, headers={"Accept": "application/json"},
+    )
+    items = ((resp.json() or {}).get("data") or []) if (resp and resp.status_code == 200) else []
+    if not items and name:
+        # Exact-name miss → fuzzy name search, take the closest leading match.
+        resp = request_with_backoff(
+            "GET", "https://db.ygoprodeck.com/api/v7/cardinfo.php",
+            params={"fname": name, "num": 5, "offset": 0},
+            headers={"Accept": "application/json"},
+        )
+        items = ((resp.json() or {}).get("data") or []) if (resp and resp.status_code == 200) else []
+    return items[0] if items else None
+
+
+def lookup_yugioh_by_rarity(
+    *,
+    name: Optional[str] = None,
+    card_id: Optional[str] = None,
+    set_name: Optional[str] = None,
+    rarity: Optional[str] = None,
+) -> Optional[Dict]:
+    """Resolve a Yu-Gi-Oh card (by name or YGOPRODeck id) and price it for the
+    given rarity printing. Returns a CatalogResult-shaped dict (+ set_code,
+    price_source) or None when the card can't be found. Used by the /scan flow
+    and the rarity-override reprice endpoint."""
+    card = _fetch_ygoprodeck_card(card_id=card_id, name=name)
+    if not card:
+        return None
+    return _ygoprodeck_result_for_rarity(card, set_name, rarity)
+
+
 def _ygoprodeck_card_payloads(query: str, limit: int) -> List[Dict]:
     """Raw card dicts from YGOPRODeck (preserves card_sets so callers can pick a printing)."""
     resp = request_with_backoff(

@@ -539,31 +539,24 @@ def extract_video_frames(
         return frames
 
 
-def identify_video(
+def identify_frames(
     client: DeepSeekVision,
     filename: str,
-    video_bytes: bytes,
+    frames: List[Tuple[bytes, str]],
     game_hint: Optional[str] = None,
-    *,
-    extractor=None,  # injectable for tests; default = extract_video_frames
 ) -> schemas.IdentifyResult:
-    """Extract frames from a video then send them all to DeepSeek in one call.
+    """Identify the most prominent card across a SEQUENCE of frames in one call.
 
-    Returns a single IdentifyResult with candidates deduped across frames
-    (highest-confidence wins per (game, name) pair). Errors during ffmpeg
-    are surfaced on the ``error`` field so the UI shows a per-clip message
-    rather than a generic 500.
+    Shared by the video endpoint (frames from ffmpeg) and the /scan camera
+    flow (frames from a still-burst). Candidates are deduped across frames
+    (highest-confidence wins per (game, name)). Never raises — failures land
+    on the ``error`` field.
     """
-    started = time.monotonic()
-    extract = extractor or extract_video_frames
-    try:
-        frames = extract(video_bytes)
-    except RuntimeError as exc:
-        logger.warning("video extract failed file=%s: %s", filename, exc)
+    if not frames:
         return schemas.IdentifyResult(
-            source_filename=filename, candidates=[], error=str(exc),
+            source_filename=filename, candidates=[], error="no frames to identify",
         )
-
+    started = time.monotonic()
     try:
         result = client.identify(
             images=frames,
@@ -572,13 +565,14 @@ def identify_video(
                 build_user_prompt(game_hint)
                 + "\n\nThis is a SEQUENCE OF FRAMES from a short video showing "
                   "one or more cards in motion (binder flip / pile pan / shelf "
-                  "pan). Identify the most prominent card visible across the "
-                  "sequence — if the camera shows multiple distinct cards, "
-                  "list each as a separate candidate."
+                  "pan / a single card tilted under light). Identify the most "
+                  "prominent card visible across the sequence — if the camera "
+                  "shows multiple distinct cards, list each as a separate "
+                  "candidate."
             ),
         )
     except DeepSeekVisionError as exc:
-        logger.warning("identify_video deepseek failed file=%s: %s", filename, exc)
+        logger.warning("identify_frames deepseek failed file=%s: %s", filename, exc)
         return schemas.IdentifyResult(
             source_filename=filename, candidates=[], error=str(exc),
         )
@@ -602,12 +596,36 @@ def identify_video(
 
     elapsed_ms = (time.monotonic() - started) * 1000.0
     logger.info(
-        "identify_video ok file=%s frames=%s candidates=%s ms=%.0f",
+        "identify_frames ok file=%s frames=%s candidates=%s ms=%.0f",
         filename, len(frames), len(final), elapsed_ms,
     )
     return schemas.IdentifyResult(
         source_filename=filename, candidates=final, error=None,
     )
+
+
+def identify_video(
+    client: DeepSeekVision,
+    filename: str,
+    video_bytes: bytes,
+    game_hint: Optional[str] = None,
+    *,
+    extractor=None,  # injectable for tests; default = extract_video_frames
+) -> schemas.IdentifyResult:
+    """Extract frames from a video then identify across them (one DeepSeek call).
+
+    Errors during ffmpeg are surfaced on the ``error`` field so the UI shows a
+    per-clip message rather than a generic 500.
+    """
+    extract = extractor or extract_video_frames
+    try:
+        frames = extract(video_bytes)
+    except RuntimeError as exc:
+        logger.warning("video extract failed file=%s: %s", filename, exc)
+        return schemas.IdentifyResult(
+            source_filename=filename, candidates=[], error=str(exc),
+        )
+    return identify_frames(client, filename, frames, game_hint)
 
 
 def identify_batch(

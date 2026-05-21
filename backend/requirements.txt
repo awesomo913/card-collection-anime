@@ -10,3 +10,12 @@ psutil>=5.9.0
 alembic>=1.13.0
 # Required by FastAPI's File()/UploadFile parameters in /identify/* endpoints.
 python-multipart>=0.0.9
+# Card-scanner rarity pipeline (/scan/*). numpy + opencv do the foil-pattern
+# measurements (FFT line angle, sparkle, varnish energy); pillow handles
+# fixture/image decode. opencv-python-headless (not -python) — no GUI/X11 deps,
+# which a headless Pi can't satisfy. picamera2 is NOT pip-installable; it's the
+# apt package python3-picamera2 and is lazy-imported in camera_service.py so the
+# backend still boots off-Pi or when the camera is absent.
+numpy>=1.26
+opencv-python-headless>=4.9
+pillow>=10.2

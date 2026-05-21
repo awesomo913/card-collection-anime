@@ -47,6 +47,20 @@ if [ ! -x backend/venv/bin/uvicorn ]; then
   python3 -m venv backend/venv
   backend/venv/bin/pip install --upgrade --quiet pip wheel
 fi
+# The /scan camera path needs picamera2, which is the apt package
+# python3-picamera2 living in the system dist-packages — it is NOT pip-installable
+# into an isolated venv. Flip include-system-site-packages so the venv can import
+# it (plus libcamera). The venv's own site-packages still precede system ones on
+# sys.path, so our pinned numpy/opencv win over any system copy. Idempotent edit.
+PYVENV_CFG="backend/venv/pyvenv.cfg"
+if [ -f "$PYVENV_CFG" ] && ! grep -qi '^include-system-site-packages *= *true' "$PYVENV_CFG"; then
+  if grep -qi '^include-system-site-packages' "$PYVENV_CFG"; then
+    sed -i 's/^include-system-site-packages *=.*/include-system-site-packages = true/I' "$PYVENV_CFG"
+  else
+    printf 'include-system-site-packages = true\n' >> "$PYVENV_CFG"
+  fi
+  log "enabled system-site-packages in venv (for picamera2)"
+fi
 # Always refresh deps on boot — pip is a no-op when everything's satisfied,
 # but this picks up new requirements (e.g. python-multipart added for /identify)
 # without forcing the user to nuke the venv. Runs in ~2-5s when up-to-date.
@@ -94,6 +108,24 @@ if command -v ffmpeg >/dev/null 2>&1; then
   log "ffmpeg available: $(command -v ffmpeg)"
 else
   log "WARNING: ffmpeg unavailable — /identify/video will return error per-call"
+fi
+
+# --- Pi Camera availability check (for the /scan card scanner) ---
+# picamera2 is the apt package python3-picamera2 (preinstalled on most Pi OS
+# desktop images). If missing, the /scan/* endpoints return 503 with a hint and
+# the rest of the app is unaffected — never blocks boot.
+if backend/venv/bin/python - <<'PY' 2>/dev/null
+import sys
+try:
+    from picamera2 import Picamera2  # noqa: F401
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PY
+then
+  log "picamera2 available — /scan card scanner enabled"
+else
+  log "WARNING: picamera2 not importable — /scan returns 503. Install with: sudo apt install -y python3-picamera2"
 fi
 
 # --- Apply pending Alembic migrations (idempotent: no-op if already at head) ---

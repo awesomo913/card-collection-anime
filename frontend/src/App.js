@@ -4,6 +4,7 @@ import CardListPage from './pages/CardListPage';
 import AddCardPage from './pages/AddCardPage';
 import CardDetailPage from './pages/CardDetailPage';
 import IdentifyPage from './pages/IdentifyPage';
+import ScanPage from './pages/ScanPage';
 import SealedListPage from './pages/SealedListPage';
 import SealedDetailPage from './pages/SealedDetailPage';
 import AddSealedPage from './pages/AddSealedPage';
@@ -37,6 +38,7 @@ function App() {
               <li><Link to="/cards">My Cards</Link></li>
               <li><Link to="/sealed">Sealed Products</Link></li>
               <li><Link to="/identify">Identify</Link></li>
+              <li><Link to="/scan">Scan</Link></li>
               <li><Link to="/snapshot">Price Snapshot</Link></li>
               <li><Link to="/settings">Backup</Link></li>
               <li><Link to="/status">Status</Link></li>
@@ -55,6 +57,9 @@ function App() {
             <Route path="/cards/edit/:id" element={<RedirectEdit basePath="/cards" />} />
             {/* DeepSeek multimodal: drop photos → ranked candidates → existing resolver. */}
             <Route path="/identify" element={<IdentifyPage />} />
+            {/* Pi-camera scanner: live preview → capture tilt-burst → card +
+                rarity + price → confirm → add. */}
+            <Route path="/scan" element={<ScanPage />} />
             <Route path="/sealed" element={<SealedListPage />} />
             <Route path="/sealed/add" element={<AddSealedPage />} />
             {/* Read-only detail mirrors /cards/:id — inline qty + notes editor,

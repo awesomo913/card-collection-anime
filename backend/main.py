@@ -19,6 +19,9 @@ from providers import PriceQuery, catalog as catalog_module
 from providers.deepseek import DeepSeekVision
 from providers.ebay import EbayProvider
 import identify_service
+import camera_service
+import scan_service
+from camera_service import CameraUnavailableError
 import forecast_service
 import profile_backup
 import status as status_module
@@ -939,6 +942,59 @@ def backfill_games(db: Session = Depends(get_db)):
     db.commit()
     logger.info("backfill-games updated=%s unresolved=%s", updated, len(unresolved))
     return {"updated": updated, "unresolved": unresolved}
+
+
+# ============================================================================
+# /scan — Pi-camera card + rarity scanner
+#
+# Registered BEFORE the SPA catch-all below (FastAPI matches in registration
+# order). Camera-missing → 503 with a hint, mirroring the DeepSeek 503 gate.
+# The full flow (capture → identify → rarity → price) lives in scan_service;
+# committing reuses the existing POST /cards/ with the returned ready_to_add.
+# ============================================================================
+
+def _require_camera() -> None:
+    """503 when no Pi camera (and no fake-camera fixtures) is available."""
+    if not camera_service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Card scanner unavailable: " + camera_service.availability_detail()
+            ),
+        )
+
+
+@app.get("/scan/preview")
+def scan_preview():
+    """Live MJPEG preview so the user can frame the card before capturing."""
+    _require_camera()
+    return StreamingResponse(
+        camera_service.preview_mjpeg(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.post("/scan/capture", response_model=schemas.ScanResult)
+def scan_capture(game_hint: Optional[str] = "yugioh"):
+    """Capture a tilt-burst, identify the card + rarity, price it, and return a
+    ready-to-add payload. The frontend confirms (optionally overriding rarity)
+    then POSTs ``ready_to_add`` to /cards/ to commit."""
+    _require_camera()
+    client = _require_deepseek_client()
+    try:
+        return scan_service.run_scan(client, game_hint=game_hint)
+    except CameraUnavailableError as exc:
+        # Camera vanished between the gate and capture (unplugged mid-request).
+        raise HTTPException(status_code=503, detail=f"Camera error: {exc}")
+
+
+@app.post("/scan/reprice", response_model=schemas.ScanRepriceResponse)
+def scan_reprice(req: schemas.ScanRepriceRequest):
+    """Re-price a card for a user-overridden rarity before commit. No camera or
+    DeepSeek needed — just a rarity-aware catalog lookup."""
+    if not req.external_id and not req.name:
+        raise HTTPException(status_code=400, detail="external_id or name is required")
+    return scan_service.reprice(req)
 
 
 # Single-port deploy mode: when ../frontend/build exists (e.g. on a Pi after
