@@ -28,12 +28,15 @@ No schema columns needed — every field (`rarity`, `condition`, `is_foil`,
 ## 1. Duplicate-on-add (backend)
 
 `crud.create_card`: before inserting, search for an existing card with the same
-**identity**, where identity is the first available of:
+**catalog identity**, where identity is the first available of:
 - `tcgplayer_product_id` (exact), else
-- `external_source` + `external_id` (exact), else
-- `name` + `set_name` + `rarity` (case-insensitive) — manual/keyless fallback
+- `external_source` + `external_id` (exact)
 
 …**AND** matching `is_foil` **AND** matching `condition`.
+
+Cards with **no** catalog identity (hand-typed manual entries) never match — they
+always insert as a new row. This matches the user's chosen "same TCGplayer
+product/catalog ID" rule and avoids surprise-merging unrelated hand-typed cards.
 
 - **Match:** increment existing `quantity` by the incoming `quantity` (default 1),
   commit, set transient `db_card.merged = True`, return it.
@@ -51,7 +54,7 @@ fetch on a *merge* is skipped — we only bump quantity, keeping the existing
 - Re-adding same product_id+foil+condition → qty increments, one row, `merged=True`.
 - Same name, different rarity → two separate rows (no merge).
 - Same printing, different foil → separate. Different condition → separate.
-- Manual (no IDs) same name+set+rarity+foil+condition → merges.
+- Manual (no catalog IDs) added twice → NOT merged (separate rows).
 - First add → `merged=False`.
 
 ## 2. Merge toast (frontend `AddCardPage`)

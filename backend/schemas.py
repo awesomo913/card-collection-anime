@@ -54,6 +54,9 @@ class Card(CardBase):
     image_url: Optional[str] = None
     external_source: Optional[str] = None
     external_id: Optional[str] = None
+    # Transient (not a DB column): set True by create_card when an add merged
+    # into an existing row (+quantity) instead of inserting. None on normal reads.
+    merged: Optional[bool] = None
     model_config = ConfigDict(from_attributes=True)
 
 class SealedProductBase(BaseModel):

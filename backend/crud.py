@@ -19,7 +19,41 @@ def get_card(db: Session, card_id: int):
 def get_cards(db: Session, skip: int = 0, limit: int = 100):
     return db.query(models.Card).offset(skip).limit(limit).all()
 
+def _find_duplicate_card(db: Session, card: schemas.CardCreate):
+    """Find an existing card with the same catalog identity + foil + condition.
+
+    Identity = tcgplayer_product_id, else external_source+external_id. Cards with
+    no catalog identity (hand-typed) never match — they always insert as a new
+    row, so distinct printings/rarities stay separate. Returns the row or None.
+    """
+    base = db.query(models.Card).filter(
+        models.Card.is_foil == card.is_foil,
+        models.Card.condition == card.condition,
+    )
+    if card.tcgplayer_product_id:
+        return base.filter(
+            models.Card.tcgplayer_product_id == card.tcgplayer_product_id
+        ).first()
+    if card.external_source and card.external_id:
+        return base.filter(
+            models.Card.external_source == card.external_source,
+            models.Card.external_id == card.external_id,
+        ).first()
+    return None
+
+
 def create_card(db: Session, card: schemas.CardCreate):
+    # Duplicate-on-add: if this exact printing (catalog id + foil + condition) is
+    # already in the collection, bump its quantity instead of inserting a second
+    # row. The price fetch is skipped on a merge — we keep the existing snapshot.
+    existing = _find_duplicate_card(db, card)
+    if existing is not None:
+        existing.quantity = (existing.quantity or 1) + (card.quantity or 1)
+        db.commit()
+        db.refresh(existing)
+        existing.merged = True  # transient flag for the API response
+        return existing
+
     db_card = models.Card(**card.model_dump())
     sources = fetch_card_prices_all_sources(
         db_card.name, db_card.set_name, db_card.game, db_card.is_foil,
@@ -41,6 +75,7 @@ def create_card(db: Session, card: schemas.CardCreate):
     db.add(db_card)
     db.commit()
     db.refresh(db_card)
+    db_card.merged = False  # transient flag for the API response
     return db_card
 
 def update_card(db: Session, card_id: int, card: schemas.CardUpdate):

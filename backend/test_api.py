@@ -79,6 +79,77 @@ def test_create_card_populates_price_sources(client):
     assert data["current_price"] > 0
 
 
+# ---- Duplicate-on-add (merge by catalog identity + foil + condition) -------
+
+def _stub_card_prices(monkeypatch):
+    """Keep dedup tests offline — never hit live TCGplayer/eBay for pricing."""
+    import crud
+    monkeypatch.setattr(crud, "fetch_card_prices_all_sources",
+                        lambda *a, **k: {"TCGPlayer": 1.0})
+
+
+def test_create_card_merges_same_printing(client, monkeypatch):
+    """Re-adding the same printing (product_id + foil + condition) bumps quantity."""
+    _stub_card_prices(monkeypatch)
+    p = {"name": "Dedup Dragon", "set_name": "DUP", "game": "yugioh",
+         "rarity": "Ultra Rare", "condition": "Near Mint", "is_foil": False,
+         "tcgplayer_product_id": "DEDUP-A", "quantity": 1}
+    c1 = client.post("/cards/", json=p).json()
+    assert c1["merged"] is False
+    assert c1["quantity"] == 1
+    c2 = client.post("/cards/", json=p).json()
+    assert c2["merged"] is True
+    assert c2["id"] == c1["id"]      # same row, not a new one
+    assert c2["quantity"] == 2       # incremented
+    rows = [c for c in client.get("/cards/").json()
+            if c.get("tcgplayer_product_id") == "DEDUP-A"]
+    assert len(rows) == 1
+
+
+def test_create_card_different_condition_not_merged(client, monkeypatch):
+    _stub_card_prices(monkeypatch)
+    base = {"name": "Cond Card", "set_name": "DUP", "game": "yugioh",
+            "rarity": "Rare", "is_foil": False, "tcgplayer_product_id": "DEDUP-COND"}
+    a = client.post("/cards/", json={**base, "condition": "Near Mint"}).json()
+    b = client.post("/cards/", json={**base, "condition": "Lightly Played"}).json()
+    assert b["merged"] is False
+    assert a["id"] != b["id"]
+
+
+def test_create_card_different_foil_not_merged(client, monkeypatch):
+    _stub_card_prices(monkeypatch)
+    base = {"name": "Foil Card", "set_name": "DUP", "game": "magic",
+            "rarity": "rare", "condition": "Near Mint", "tcgplayer_product_id": "DEDUP-FOIL"}
+    a = client.post("/cards/", json={**base, "is_foil": False}).json()
+    b = client.post("/cards/", json={**base, "is_foil": True}).json()
+    assert b["merged"] is False
+    assert a["id"] != b["id"]
+
+
+def test_create_card_manual_no_ids_never_merges(client, monkeypatch):
+    """No catalog identity => always insert (no name-based merge of hand-typed cards)."""
+    _stub_card_prices(monkeypatch)
+    p = {"name": "Manual Card", "set_name": "DUP", "game": "magic",
+         "rarity": "rare", "condition": "Near Mint", "is_foil": False}
+    a = client.post("/cards/", json=p).json()
+    b = client.post("/cards/", json=p).json()
+    assert b["merged"] is False
+    assert a["id"] != b["id"]
+
+
+def test_create_card_same_name_different_printing_separate(client, monkeypatch):
+    """Different printings of one card name stay separate (rarity variants)."""
+    _stub_card_prices(monkeypatch)
+    base = {"name": "Variant Card", "set_name": "DUP", "game": "yugioh",
+            "condition": "Near Mint", "is_foil": False}
+    a = client.post("/cards/", json={**base, "rarity": "Ultra Rare",
+                                     "tcgplayer_product_id": "VAR-UR"}).json()
+    b = client.post("/cards/", json={**base, "rarity": "Secret Rare",
+                                     "tcgplayer_product_id": "VAR-SR"}).json()
+    assert b["merged"] is False
+    assert a["id"] != b["id"]
+
+
 def test_read_card_by_id(client):
     res = client.get("/cards/1")
     assert res.status_code == 200
