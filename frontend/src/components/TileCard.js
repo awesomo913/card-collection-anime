@@ -9,7 +9,7 @@ const SOURCE_COLORS = {
   CardMarket: 'var(--neon-pink)',
 };
 
-const TileCard = ({ item, onDelete }) => {
+const TileCard = ({ item, onDelete, onRarityClick }) => {
   const isSealed = !!item.product_type;
   const itemType = isSealed ? 'sealed' : 'card';
   // Phase D: separate read-only detail path from edit path. Tile click opens
@@ -59,6 +59,22 @@ const TileCard = ({ item, onDelete }) => {
         <div className="qty-pill" aria-label={`Quantity ${qty}`} title={`You have ${qty} of this card`}>
           ×{qty}
         </div>
+      )}
+      {/* Rarity badge: top-left corner, OUTSIDE the detail Link so clicking it
+          filters instead of navigating. Only for cards that carry a rarity. */}
+      {item.rarity && (
+        onRarityClick ? (
+          <button
+            type="button"
+            className="rarity-badge"
+            title={`Filter by ${item.rarity}`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRarityClick(item.rarity); }}
+          >
+            {item.rarity}
+          </button>
+        ) : (
+          <span className="rarity-badge" title={item.rarity}>{item.rarity}</span>
+        )
       )}
       <Link to={detailPath} className="tile-link">
         <header className="tile-header">

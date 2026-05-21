@@ -102,19 +102,28 @@ const AddCardPage = () => {
           ? null
           : parseFloat(card.purchase_price),
       };
+      let createRes = null;
       if (id) {
         await api.updateCard(id, payload);
       } else {
-        await api.createCard(payload);
+        createRes = await api.createCard(payload);
       }
+      // The backend folds a duplicate add into the existing row and flags
+      // merged=true (returning the new total quantity) instead of inserting.
+      const merged = createRes?.data?.merged;
+      const newQty = createRes?.data?.quantity;
+      const nm = card.name || 'card';
+      const msg = merged
+        ? `Already had "${nm}" — added +1 (now ×${newQty}).`
+        : `Saved "${nm}".`;
       if (id || !addAnother) {
-        // Edit mode OR final save — redirect.
+        // Edit mode OR final save — show the message briefly, then redirect.
         setSaved(true);
-        setTimeout(() => navigate('/cards'), 800);
+        setSavedToast(msg);
+        setTimeout(() => navigate('/cards'), merged ? 1500 : 800);
       } else {
         // Add-another mode: keep editing. Toast + clear form + scroll to top.
-        const justSaved = card.name || 'card';
-        setSavedToast(`Saved "${justSaved}". Paste the next URL.`);
+        setSavedToast(`${msg} Paste the next URL.`);
         setTimeout(() => setSavedToast(null), 3500);
         setCard({ ...EMPTY_CARD, game: card.game });  // keep game for batch consistency
         if (formTopRef.current) formTopRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -154,7 +163,7 @@ const AddCardPage = () => {
   };
 
   if (loading && !saved) return <div className="loading">Working…</div>;
-  if (saved) return <div className="loading">Saved! Redirecting…</div>;
+  if (saved) return <div className="loading">{savedToast || 'Saved! Redirecting…'}</div>;
 
   return (
     <section ref={formTopRef}>

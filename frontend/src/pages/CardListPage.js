@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import TileCard from '../components/TileCard';
 import { groupByGame } from '../utils/groupByGame';
+import { RARITIES_BY_GAME } from '../data/options';
 
 /* --------------------------------------------------------------------------
  * CardListPage — view + sort + filter the user's card collection.
@@ -13,7 +14,7 @@ import { groupByGame } from '../utils/groupByGame';
  * so it survives reloads and Pi restarts. Goal: find any card in <5 seconds.
  * ------------------------------------------------------------------------ */
 
-const FILTER_STORAGE_KEY = 'card-list-filters-v1';
+const FILTER_STORAGE_KEY = 'card-list-filters-v2';
 
 const DEFAULT_FILTERS = {
   search: '',
@@ -23,15 +24,26 @@ const DEFAULT_FILTERS = {
   rarity: '',
   minPrice: '',
   maxPrice: '',
-  sort: 'newest', // newest | value-desc | value-asc | name-asc | recently-priced
+  // Default: alphabetical, with rarest printing first among same-named cards.
+  sort: 'name-rarity',
 };
 
 const SORT_LABELS = {
+  'name-rarity': 'A → Z (rarity)',
   newest: 'Newest first',
   'value-desc': 'Highest value',
   'value-asc': 'Lowest value',
   'name-asc': 'A → Z',
   'recently-priced': 'Recently priced',
+};
+
+// Rank a rarity by its index in the game's rarity list (data/options.js), which
+// is ordered common→rarest, so higher index = rarer. Case-insensitive. Unknown
+// or free-typed rarities return -1 and sort last under "rarest first".
+const rarityRank = (rarity, game) => {
+  const list = RARITIES_BY_GAME[(game || '').toLowerCase()] || [];
+  const r = (rarity || '').trim().toLowerCase();
+  return list.findIndex((x) => x.toLowerCase() === r);
 };
 
 const GAME_LABEL = {
@@ -42,6 +54,18 @@ const GAME_LABEL = {
 
 const sortComparator = (mode) => {
   switch (mode) {
+    case 'name-rarity':
+      return (a, b) => {
+        const byName = (a.name || '').localeCompare(b.name || '');
+        if (byName !== 0) return byName;
+        // Same name → rarest first. Unknown rarity (-1) → -Infinity sorts last.
+        const ra = rarityRank(a.rarity, a.game);
+        const rb = rarityRank(b.rarity, b.game);
+        const na = ra < 0 ? -Infinity : ra;
+        const nb = rb < 0 ? -Infinity : rb;
+        if (na !== nb) return nb - na; // descending rank
+        return (a.set_name || '').localeCompare(b.set_name || ''); // final tiebreak
+      };
     case 'value-desc':
       return (a, b) => (b.current_price ?? -1) - (a.current_price ?? -1);
     case 'value-asc':
@@ -72,6 +96,7 @@ const CardListPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState(loadFilters);
+  const searchRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
@@ -92,6 +117,21 @@ const CardListPage = () => {
     }, 200);
     return () => clearTimeout(handle);
   }, [filters]);
+
+  // Press "/" anywhere on the page to jump to the search box (ignored while
+  // already typing in a field). Pairs with the sticky search bar so the user
+  // can search from anywhere without scrolling back up.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== '/') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Build a list of unique rarities present in the collection — feeds the rarity
   // datalist. Only rarities that actually exist in the user's collection appear,
@@ -173,9 +213,10 @@ const CardListPage = () => {
       <div className="filter-panel" role="region" aria-label="Card filters">
         <div className="filter-row">
           <input
+            ref={searchRef}
             type="text"
             className="filter-search"
-            placeholder="Search by name, set, or notes…"
+            placeholder="Search by name, set, or notes…  (press /)"
             value={filters.search}
             onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
           />
@@ -325,7 +366,12 @@ const CardListPage = () => {
             </h3>
             <div className="card-grid">
               {section.items.map((c) => (
-                <TileCard key={c.id} item={c} onDelete={handleDelete} />
+                <TileCard
+                  key={c.id}
+                  item={c}
+                  onDelete={handleDelete}
+                  onRarityClick={(r) => setFilters((f) => ({ ...f, rarity: r }))}
+                />
               ))}
             </div>
           </div>
