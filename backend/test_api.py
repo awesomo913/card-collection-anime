@@ -150,6 +150,19 @@ def test_create_card_same_name_different_printing_separate(client, monkeypatch):
     assert a["id"] != b["id"]
 
 
+def test_create_card_merges_when_condition_null(client, monkeypatch):
+    """Condition-less cards must still merge — dedup needs IS NULL, not = NULL."""
+    _stub_card_prices(monkeypatch)
+    p = {"name": "NullCond Card", "set_name": "DUP", "game": "magic",
+         "rarity": "rare", "is_foil": False, "tcgplayer_product_id": "DEDUP-NULLCOND"}
+    # condition omitted entirely -> None
+    c1 = client.post("/cards/", json=p).json()
+    assert c1["merged"] is False
+    c2 = client.post("/cards/", json=p).json()
+    assert c2["merged"] is True
+    assert c2["quantity"] == 2
+
+
 def test_read_card_by_id(client):
     res = client.get("/cards/1")
     assert res.status_code == 200

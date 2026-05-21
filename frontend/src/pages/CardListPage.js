@@ -200,7 +200,7 @@ const CardListPage = () => {
     filters.rarity ||
     filters.minPrice !== '' ||
     filters.maxPrice !== '' ||
-    filters.sort !== 'newest'
+    filters.sort !== DEFAULT_FILTERS.sort
   );
 
   if (loading) return <div className="loading">Loading…</div>;
