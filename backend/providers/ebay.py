@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import statistics
 import threading
 import time
@@ -75,6 +76,30 @@ def _tiers_from_prices(prices: list) -> Optional[dict]:
         "high": round(float(high), 2),
         "market": round(float(median), 2),
     }
+
+
+# Listings we never want polluting a price: graded slabs (PSA/BGS/CGC) sell for
+# many multiples of raw, and multi-card lots / sealed cases aren't the single
+# item being priced. Word-boundary matches so "Showcase" never trips "case".
+_GRADED_RE = re.compile(r"\b(psa|bgs|cgc|sgc|graded|slabbed|slab)\b", re.IGNORECASE)
+_LOT_RE = re.compile(r"\b(lots?|cases?|bundles?)\b", re.IGNORECASE)
+_SEALED_RE = re.compile(r"\bsealed\b", re.IGNORECASE)
+
+
+def _is_excluded_title(title: str, *, is_sealed: bool) -> bool:
+    """True if an eBay listing title should be dropped before pricing.
+
+    Graded slabs and lots/cases are excluded for everything. ``sealed`` is
+    excluded only for single cards — for a sealed product the listing is
+    *supposed* to be sealed, so excluding it would drop every real match.
+    """
+    t = title or ""
+    if _GRADED_RE.search(t) or _LOT_RE.search(t):
+        return True
+    if not is_sealed and _SEALED_RE.search(t):
+        return True
+    return False
+
 
 CATEGORY_IDS = {
     # eBay Trading Cards categories
@@ -213,6 +238,8 @@ class EbayProvider:
         items = self._search_items(query)
         prices = []
         for item in items:
+            if _is_excluded_title(item.get("title", ""), is_sealed=query.is_sealed):
+                continue
             price_obj = item.get("price") or {}
             try:
                 value = float(price_obj.get("value"))

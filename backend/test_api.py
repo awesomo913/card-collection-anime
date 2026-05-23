@@ -918,6 +918,69 @@ def test_sealed_falls_back_to_mock_when_empty(monkeypatch):
         snap["name"], snap["set_name"], snap["product_type"], snap["game"])
 
 
+# ---- TCGPlayer-primary headline + eBay graded/lot exclusion (Chunk 1) ------
+
+def test_headline_price_prefers_tcgplayer():
+    """current_price uses the exact per-printing TCGPlayer price when present,
+    not a blend dragged up by eBay shipping-floor / lot noise."""
+    from price_service import headline_price
+    assert headline_price({"TCGPlayer": 0.94, "eBay": 4.34}) == 0.94
+
+
+def test_headline_price_means_without_tcgplayer():
+    """No TCGPlayer => mean of whatever sources remain."""
+    from price_service import headline_price
+    assert headline_price({"eBay": 4.0, "CardMarket": 6.0}) == 5.0
+
+
+def test_headline_price_none_when_empty():
+    from price_service import headline_price
+    assert headline_price({}) is None
+
+
+def test_is_excluded_title_drops_graded_and_lots():
+    from providers.ebay import _is_excluded_title
+    assert _is_excluded_title("Dark Magician PSA 10", is_sealed=False) is True
+    assert _is_excluded_title("Dark Magician Ultra Rare lot of 5", is_sealed=False) is True
+    assert _is_excluded_title("Dark Magician Ultra Rare", is_sealed=False) is False
+
+
+def test_is_excluded_title_showcase_is_not_a_case():
+    """Word-boundary match: 'Showcase' must not trip the 'case' lot filter."""
+    from providers.ebay import _is_excluded_title
+    assert _is_excluded_title("Mimikyu ex Showcase", is_sealed=True) is False
+
+
+def test_is_excluded_title_sealed_only_excluded_for_singles():
+    from providers.ebay import _is_excluded_title
+    assert _is_excluded_title("Charizard sealed booster pack", is_sealed=False) is True
+    assert _is_excluded_title("Booster Box factory sealed", is_sealed=True) is False
+
+
+def test_ebay_fetch_skips_graded_and_lot_listings(monkeypatch):
+    """Graded slabs and lots are dropped before the median so a raw single's
+    eBay price isn't dragged up by a PSA 10 or a 20-card lot."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"itemSummaries": [
+                {"title": "Dark Magician Ultra Rare", "price": {"value": "4.0", "currency": "USD"}},
+                {"title": "Dark Magician Ultra Rare", "price": {"value": "5.0", "currency": "USD"}},
+                {"title": "Dark Magician PSA 10 GEM MINT", "price": {"value": "300.0", "currency": "USD"}},
+                {"title": "Dark Magician lot of 20 cards", "price": {"value": "80.0", "currency": "USD"}},
+            ]}
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+    res = ebay.EbayProvider().fetch(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh", rarity="Ultra Rare"))
+    assert res.price == 4.5  # median of [4.0, 5.0]; PSA 300 + lot 80 dropped
+
+
 # ---- Sealed name search (DeepSeek normalize + eBay enrich) -----------------
 
 class _FakeChatResult:

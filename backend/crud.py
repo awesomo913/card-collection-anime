@@ -7,6 +7,7 @@ from price_service import (
     fetch_card_prices_all_sources,
     fetch_sealed_price,
     fetch_sealed_prices_all_sources,
+    headline_price,
 )
 from datetime import datetime, timedelta
 from sqlalchemy import func
@@ -62,9 +63,7 @@ def create_card(db: Session, card: schemas.CardCreate):
         tcgplayer_product_id=db_card.tcgplayer_product_id,
     )
     db_card.price_sources = sources or None
-    db_card.current_price = (
-        round(sum(sources.values()) / len(sources), 2) if sources else None
-    )
+    db_card.current_price = headline_price(sources)
     # Snapshot the market price AT THE TIME the user added this card. Future
     # refreshes will move current_price up/down but acquired_price stays put
     # so we can show "+$3.40 since you added" gains/losses on the detail page.
@@ -130,9 +129,7 @@ def create_sealed_product(db: Session, sealed: schemas.SealedProductCreate):
             db_sealed.name, db_sealed.set_name, db_sealed.product_type, db_sealed.game,
         )
     db_sealed.price_sources = sources or None
-    db_sealed.current_price = (
-        round(sum(sources.values()) / len(sources), 2) if sources else None
-    )
+    db_sealed.current_price = headline_price(sources)
     if db_sealed.acquired_price is None:
         db_sealed.acquired_price = db_sealed.current_price
     db.add(db_sealed)

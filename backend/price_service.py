@@ -74,6 +74,22 @@ def _aggregate(query: PriceQuery, mock_fn) -> Tuple[Dict[str, float], Dict[str, 
     return mock_fn(), {}
 
 
+def headline_price(prices: Dict[str, float]) -> Optional[float]:
+    """The single ``current_price`` shown for an item.
+
+    TCGPlayer is the exact per-printing market price, so when present it is the
+    headline on its own. eBay runs systematically high (shipping-price floors on
+    cheap cards, plus graded/lot listings) so blending it in inflated the
+    headline — instead it stays in ``price_sources`` as a secondary signal. With
+    no TCGPlayer price, fall back to the mean of whatever sources exist.
+    """
+    if not prices:
+        return None
+    if "TCGPlayer" in prices:
+        return prices["TCGPlayer"]
+    return round(sum(prices.values()) / len(prices), 2)
+
+
 def fetch_card_prices_all_sources(
     name: str,
     set_name: str,
@@ -193,14 +209,14 @@ def fetch_card_price(
         external_source=external_source, external_id=external_id,
         tcgplayer_product_id=tcgplayer_product_id, rarity=rarity,
     )
-    return round(sum(prices.values()) / len(prices), 2) if prices else None
+    return headline_price(prices)
 
 
 def fetch_sealed_price(
     name: str, set_name: str, product_type: str, game: str
 ) -> Optional[float]:
     prices = fetch_sealed_prices_all_sources(name, set_name, product_type, game)
-    return round(sum(prices.values()) / len(prices), 2) if prices else None
+    return headline_price(prices)
 
 
 def update_all_prices() -> None:
@@ -365,9 +381,7 @@ def _persist_card_prices(card_id: int, prices: Dict[str, float], tiers_by_source
                                   tiers=tiers_by_source.get(source))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PriceHistory write failed (card %s): %s", card.id, exc)
-        card.current_price = (
-            round(sum(prices.values()) / len(prices), 2) if prices else None
-        )
+        card.current_price = headline_price(prices)
         card.price_sources = prices or None
         card.last_price_update = now
         db.commit()
@@ -387,9 +401,7 @@ def _persist_sealed_prices(sealed_id: int, prices: Dict[str, float], tiers_by_so
                                   tiers=tiers_by_source.get(source))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("PriceHistory write failed (sealed %s): %s", sealed.id, exc)
-        sealed.current_price = (
-            round(sum(prices.values()) / len(prices), 2) if prices else None
-        )
+        sealed.current_price = headline_price(prices)
         sealed.price_sources = prices or None
         sealed.last_price_update = now
         db.commit()
