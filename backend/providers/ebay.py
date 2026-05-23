@@ -44,6 +44,32 @@ def _safe_image_url(url) -> Optional[str]:
     <img> tag, so we still block non-https / javascript: / data: URIs."""
     return url if isinstance(url, str) and url.startswith("https://") else None
 
+
+def _tiers_from_prices(prices: list) -> Optional[dict]:
+    """Outlier-resistant low/mid/high/market from a listing price set.
+
+    eBay name-search returns adjacent/wrong cards + multi-card lots, so raw
+    min/max would be junk (a $1 wrong card, a $99 bundle). Use quartiles when
+    there's enough data — low=Q1, mid/market=median, high=Q3 — so the extreme
+    cheap-wrong-card and expensive-lot listings fall outside Q1..Q3. Falls back
+    to min/max only when there are too few points (<4) to trim meaningfully.
+    """
+    if not prices:
+        return None
+    ordered = sorted(prices)
+    median = statistics.median(ordered)
+    if len(ordered) >= 4:
+        q1, _q2, q3 = statistics.quantiles(ordered, n=4)
+        low, high = q1, q3
+    else:
+        low, high = ordered[0], ordered[-1]
+    return {
+        "low": round(float(low), 2),
+        "mid": round(float(median), 2),
+        "high": round(float(high), 2),
+        "market": round(float(median), 2),
+    }
+
 CATEGORY_IDS = {
     # eBay Trading Cards categories
     "magic": "183454",
@@ -150,7 +176,11 @@ class EbayProvider:
 
         # Median is more robust to outliers than mean for marketplace listings.
         median = statistics.median(prices)
-        return ProviderResult(self.name, round(float(median), 2), raw={"sample_size": len(prices)})
+        return ProviderResult(
+            self.name, round(float(median), 2),
+            raw={"sample_size": len(prices)},
+            tiers=_tiers_from_prices(prices),
+        )
 
     def fetch_listings(self, query: PriceQuery, limit: int = 10) -> list:
         """Return individual eBay listings instead of a collapsed median.

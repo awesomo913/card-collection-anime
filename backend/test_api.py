@@ -549,6 +549,43 @@ def test_ebay_fetch_listings_rejects_non_https_image(monkeypatch):
     assert listings[0]["image"] is None
 
 
+def test_ebay_tiers_from_prices_resists_outliers():
+    """low/mid/high derived from a noisy listing set must trim extremes
+    (cheap wrong-card, expensive multi-card lot) — quartiles, not raw min/max."""
+    from providers.ebay import _tiers_from_prices
+    prices = [1.0, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 99.0]
+    t = _tiers_from_prices(prices)
+    assert t["mid"] == 11.25          # median, unaffected by the $1 / $99 extremes
+    assert t["market"] == 11.25
+    assert t["low"] > 1.0             # cheap wrong-card trimmed out
+    assert t["high"] < 99.0           # expensive lot trimmed out
+    assert t["low"] <= t["mid"] <= t["high"]
+
+
+def test_ebay_fetch_returns_tiers(monkeypatch):
+    """fetch() carries tiers so the refresh can persist low/mid/high to history."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"itemSummaries": [
+                {"price": {"value": str(v), "currency": "USD"}}
+                for v in [1.0, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 99.0]
+            ]}
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+    res = ebay.EbayProvider().fetch(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh")
+    )
+    assert res.tiers is not None
+    assert res.tiers["low"] <= res.tiers["mid"] <= res.tiers["high"]
+    assert res.tiers["low"] > 1.0 and res.tiers["high"] < 99.0
+
+
 def test_ebay_fetch_listings_empty_when_disabled(monkeypatch):
     """No credentials => no listings (graceful, never raises)."""
     for v in ["EBAY_OAUTH_TOKEN", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]:
