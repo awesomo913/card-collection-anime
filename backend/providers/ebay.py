@@ -123,7 +123,14 @@ class EbayProvider:
                 logger.error("eBay token request failed")
                 return None
             data = resp.json()
-            self._token = data.get("access_token")
+            token = data.get("access_token")
+            if not token:
+                # A 200 with no access_token (wrong scope, malformed body) would
+                # otherwise silently disable the provider with no trace. Log it
+                # and leave _token_expires_at untouched so the next call retries.
+                logger.error("eBay token response had no access_token")
+                return None
+            self._token = token
             self._token_expires_at = time.time() + float(data.get("expires_in", 7200))
             return self._token
 

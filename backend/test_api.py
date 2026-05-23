@@ -586,6 +586,33 @@ def test_ebay_fetch_returns_tiers(monkeypatch):
     assert res.tiers["low"] > 1.0 and res.tiers["high"] < 99.0
 
 
+def test_ebay_token_missing_access_token_logs_and_returns_none(monkeypatch, caplog):
+    """A 200 OAuth response with no access_token must log an error and return
+    None — never silently disable the provider with no trace, and never advance
+    the expiry (so the next call retries instead of caching the failure)."""
+    import logging
+    monkeypatch.setenv("EBAY_CLIENT_ID", "id")
+    monkeypatch.setenv("EBAY_CLIENT_SECRET", "secret")
+    monkeypatch.delenv("EBAY_OAUTH_TOKEN", raising=False)
+    from providers import ebay
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"token_type": "Bearer", "expires_in": 7200}  # no access_token
+
+    monkeypatch.setattr(ebay, "request_with_backoff", lambda *a, **kw: FakeResp())
+
+    provider = ebay.EbayProvider()
+    with caplog.at_level(logging.ERROR):
+        token = provider._get_token()
+
+    assert token is None
+    assert "access_token" in caplog.text
+    assert provider._token_expires_at == 0.0  # not advanced -> next call retries
+
+
 def test_ebay_fetch_listings_empty_when_disabled(monkeypatch):
     """No credentials => no listings (graceful, never raises)."""
     for v in ["EBAY_OAUTH_TOKEN", "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET"]:
