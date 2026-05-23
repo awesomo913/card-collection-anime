@@ -638,6 +638,259 @@ def test_ebay_listings_endpoint_404_missing_item(client):
     assert res.status_code == 404
 
 
+# ---- rarity-aware pricing (Chunk 1) ----------------------------------------
+
+def test_pricequery_carries_rarity():
+    """A card's rarity rides along on the query so providers can scope by it."""
+    from providers.base import PriceQuery
+    q = PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh",
+                   rarity="Ultra Rare")
+    assert q.rarity == "Ultra Rare"
+
+
+def test_pricequery_rarity_defaults_none():
+    """Rarity is optional — existing constructions (and sealed) omit it."""
+    from providers.base import PriceQuery
+    q = PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh")
+    assert q.rarity is None
+
+
+class _RecordingSearch:
+    """eBay HTTP stub that records each call's `q` and returns a scripted
+    result set per call — so a test can prove the fallback fires a 2nd search.
+
+    `results_per_call` is a list of price-value lists; call N returns the Nth
+    entry (the last entry repeats if there are more calls than scripts).
+    """
+
+    def __init__(self, results_per_call):
+        self.results_per_call = list(results_per_call)
+        self.queries = []
+
+    def __call__(self, method, url, **kw):
+        self.queries.append(kw["params"]["q"])
+        idx = min(len(self.queries) - 1, len(self.results_per_call) - 1)
+        values = self.results_per_call[idx]
+        items = [{"price": {"value": str(v), "currency": "USD"}} for v in values]
+
+        class _Resp:
+            status_code = 200
+
+            def json(self_inner):
+                return {"itemSummaries": items}
+
+        return _Resp()
+
+
+def test_ebay_search_includes_rarity_in_query(monkeypatch):
+    """When the card has a rarity, the eBay query is scoped by it."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    stub = _RecordingSearch([[10.0, 11.0, 12.0, 13.0, 14.0, 15.0]])  # plenty
+    monkeypatch.setattr(ebay, "request_with_backoff", stub)
+
+    ebay.EbayProvider()._search_items(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh",
+                   rarity="Starlight Rare")
+    )
+    assert len(stub.queries) == 1                  # no fallback needed
+    assert "Starlight Rare" in stub.queries[0]
+    assert "Dark Magician" in stub.queries[0]
+
+
+def test_ebay_search_falls_back_when_rarity_too_sparse(monkeypatch):
+    """A rarity-scoped search that returns too few hits retries without rarity
+    (eBay's rarity tags are inconsistent — a near-empty result is worse than
+    the broad median). The broad result set is what gets used."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    # call #1 (rarity-scoped): 1 lonely hit -> fall back.
+    # call #2 (broad): a healthy set.
+    stub = _RecordingSearch([[99.0], [5.0, 6.0, 7.0, 8.0, 9.0, 10.0]])
+    monkeypatch.setattr(ebay, "request_with_backoff", stub)
+
+    items = ebay.EbayProvider()._search_items(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh",
+                   rarity="Starlight Rare")
+    )
+    assert len(stub.queries) == 2                       # fallback fired
+    assert "Starlight Rare" in stub.queries[0]          # first try scoped
+    assert "Starlight Rare" not in stub.queries[1]      # retry dropped rarity
+    assert "Dark Magician" in stub.queries[1]           # but kept name+set
+    assert len(items) == 6                              # used the broad set
+
+
+def test_ebay_search_no_fallback_when_rarity_has_enough(monkeypatch):
+    """A rarity-scoped search with plenty of hits is trusted — no second call."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    stub = _RecordingSearch([[5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])  # 8 hits
+    monkeypatch.setattr(ebay, "request_with_backoff", stub)
+
+    items = ebay.EbayProvider()._search_items(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh",
+                   rarity="Starlight Rare")
+    )
+    assert len(stub.queries) == 1
+    assert len(items) == 8
+
+
+def test_ebay_search_no_fallback_without_rarity(monkeypatch):
+    """A naturally-sparse search with NO rarity must not double-call —
+    the fallback only exists to recover from a too-narrow rarity scope."""
+    _enable_ebay(monkeypatch)
+    from providers import ebay
+    from providers.base import PriceQuery
+
+    stub = _RecordingSearch([[42.0]])  # sparse, but no rarity was set
+    monkeypatch.setattr(ebay, "request_with_backoff", stub)
+
+    ebay.EbayProvider()._search_items(
+        PriceQuery(name="Dark Magician", set_name="RA05", game="yugioh")
+    )
+    assert len(stub.queries) == 1
+
+
+def test_card_fetch_threads_rarity_to_provider(monkeypatch):
+    """A card's rarity reaches the provider via the PriceQuery (so eBay can
+    scope by it). Captured through a spy provider."""
+    import price_service
+    from providers.base import ProviderResult
+
+    captured = {}
+
+    class SpyProvider:
+        name = "Spy"
+
+        def is_enabled(self):
+            return True
+
+        def fetch(self, query):
+            captured["query"] = query
+            return ProviderResult("Spy", 1.0)
+
+    monkeypatch.setattr(price_service, "get_enabled_providers", lambda: [SpyProvider()])
+
+    price_service.fetch_card_prices_all_sources_detailed(
+        "Dark Magician", "RA05", "yugioh", rarity="Ultra Rare"
+    )
+    assert captured["query"].rarity == "Ultra Rare"
+
+
+def test_refresh_threads_card_rarity(client, monkeypatch):
+    """The scheduler refresh carries each card's stored rarity through to the
+    provider — the snapshot must include rarity or the prod path drops it."""
+    import database
+    import models
+    import price_service
+    from providers.base import ProviderResult
+
+    res = client.post("/cards/", json={
+        "name": "RarityRefreshCard", "set_name": "RA05", "game": "yugioh",
+    })
+    cid = res.json()["id"]
+    # Set rarity directly — isolates "does refresh thread rarity?" from
+    # "does the create endpoint accept rarity?".
+    with database.SessionLocal() as db:
+        card = db.query(models.Card).filter(models.Card.id == cid).first()
+        card.rarity = "Ultra Rare"
+        db.commit()
+
+    seen = []
+
+    class SpyProvider:
+        name = "Spy"
+
+        def is_enabled(self):
+            return True
+
+        def fetch(self, query):
+            seen.append((query.name, query.rarity))
+            return ProviderResult("Spy", 1.0)
+
+    monkeypatch.setattr(price_service, "get_enabled_providers", lambda: [SpyProvider()])
+    price_service.update_all_prices()
+
+    assert ("RarityRefreshCard", "Ultra Rare") in seen
+
+
+# ---- sealed eBay-on-top-of-catalog (Chunk 1) -------------------------------
+
+class _FakeSealedProvider:
+    def __init__(self, name, price):
+        self.name = name
+        self._price = price
+
+    def fetch(self, query):
+        from providers.base import ProviderResult
+        return ProviderResult(self.name, self._price)
+
+
+def _sealed_snap(**over):
+    snap = {
+        "id": 1, "name": "Booster Box", "set_name": "RA05",
+        "product_type": "booster box", "game": "yugioh",
+        "external_source": None, "external_id": None,
+        "tcgplayer_product_id": None,
+    }
+    snap.update(over)
+    return snap
+
+
+def test_sealed_runs_ebay_on_top_of_catalog(monkeypatch):
+    """The bug fix: sealed must layer eBay ON TOP of the catalog TCGPlayer price,
+    not return early once the catalog price lands."""
+    import price_service
+    monkeypatch.setattr(price_service.catalog, "fetch_tcgplayer_price",
+                        lambda *a, **kw: 50.0)
+    monkeypatch.setattr(price_service, "get_enabled_providers",
+                        lambda: [_FakeSealedProvider("eBay", 12.0)])
+
+    prices, _ = price_service._resolve_sealed_prices_detailed(
+        _sealed_snap(tcgplayer_product_id="123"))
+    assert prices == {"TCGPlayer": 50.0, "eBay": 12.0}
+
+
+def test_sealed_catalog_only_when_ebay_empty(monkeypatch):
+    """Catalog price + eBay returns nothing => just TCGPlayer, NOT mock data."""
+    import price_service
+    monkeypatch.setattr(price_service.catalog, "fetch_tcgplayer_price",
+                        lambda *a, **kw: 50.0)
+    monkeypatch.setattr(price_service, "get_enabled_providers",
+                        lambda: [_FakeSealedProvider("eBay", None)])
+
+    prices, _ = price_service._resolve_sealed_prices_detailed(
+        _sealed_snap(tcgplayer_product_id="123"))
+    assert prices == {"TCGPlayer": 50.0}
+
+
+def test_sealed_ebay_only_when_no_catalog(monkeypatch):
+    """No catalog identity => eBay alone carries the price."""
+    import price_service
+    monkeypatch.setattr(price_service, "get_enabled_providers",
+                        lambda: [_FakeSealedProvider("eBay", 12.0)])
+
+    prices, _ = price_service._resolve_sealed_prices_detailed(_sealed_snap())
+    assert prices == {"eBay": 12.0}
+
+
+def test_sealed_falls_back_to_mock_when_empty(monkeypatch):
+    """Nothing anywhere => deterministic mock (unchanged last-resort behavior)."""
+    import price_service
+    monkeypatch.setattr(price_service, "get_enabled_providers", lambda: [])
+
+    snap = _sealed_snap()
+    prices, _ = price_service._resolve_sealed_prices_detailed(snap)
+    assert prices == price_service._mock_sealed_prices(
+        snap["name"], snap["set_name"], snap["product_type"], snap["game"])
+
+
 # ---- Sealed name search (DeepSeek normalize + eBay enrich) -----------------
 
 class _FakeChatResult:

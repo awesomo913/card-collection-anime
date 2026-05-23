@@ -82,6 +82,7 @@ def fetch_card_prices_all_sources(
     external_source: Optional[str] = None,
     external_id: Optional[str] = None,
     tcgplayer_product_id: Optional[str] = None,
+    rarity: Optional[str] = None,
 ) -> Dict[str, float]:
     """Aggregate prices for a card (source -> price). See the detailed variant
     for the full contract; this thin wrapper drops the tier data for callers
@@ -89,7 +90,7 @@ def fetch_card_prices_all_sources(
     prices, _ = fetch_card_prices_all_sources_detailed(
         name, set_name, game, is_foil,
         external_source=external_source, external_id=external_id,
-        tcgplayer_product_id=tcgplayer_product_id,
+        tcgplayer_product_id=tcgplayer_product_id, rarity=rarity,
     )
     return prices
 
@@ -102,6 +103,7 @@ def fetch_card_prices_all_sources_detailed(
     external_source: Optional[str] = None,
     external_id: Optional[str] = None,
     tcgplayer_product_id: Optional[str] = None,
+    rarity: Optional[str] = None,
 ) -> Tuple[Dict[str, float], Dict[str, dict]]:
     """Aggregate prices for a card, returning ``(prices, tiers_by_source)``.
 
@@ -130,7 +132,7 @@ def fetch_card_prices_all_sources_detailed(
         if catalog_price is not None:
             out["TCGPlayer"] = round(float(catalog_price), 2)
 
-    query = PriceQuery(name=name, set_name=set_name, game=game, is_foil=is_foil)
+    query = PriceQuery(name=name, set_name=set_name, game=game, is_foil=is_foil, rarity=rarity)
     providers = get_enabled_providers()
     for provider in providers:
         # Don't overwrite the catalog-derived TCGPlayer price.
@@ -184,11 +186,12 @@ def fetch_card_price(
     external_source: Optional[str] = None,
     external_id: Optional[str] = None,
     tcgplayer_product_id: Optional[str] = None,
+    rarity: Optional[str] = None,
 ) -> Optional[float]:
     prices = fetch_card_prices_all_sources(
         name, set_name, game, is_foil,
         external_source=external_source, external_id=external_id,
-        tcgplayer_product_id=tcgplayer_product_id,
+        tcgplayer_product_id=tcgplayer_product_id, rarity=rarity,
     )
     return round(sum(prices.values()) / len(prices), 2) if prices else None
 
@@ -227,6 +230,7 @@ def update_all_prices() -> None:
                 "set_name": c.set_name,
                 "game": c.game,
                 "is_foil": c.is_foil,
+                "rarity": c.rarity,
                 "external_source": c.external_source,
                 "external_id": c.external_id,
                 "tcgplayer_product_id": c.tcgplayer_product_id,
@@ -262,6 +266,7 @@ def update_all_prices() -> None:
                 external_source=snap["external_source"],
                 external_id=snap["external_id"],
                 tcgplayer_product_id=snap["tcgplayer_product_id"],
+                rarity=snap["rarity"],
             )
             return (snap["id"], prices, tiers)
         except Exception as exc:  # noqa: BLE001 — one bad card shouldn't kill the batch
@@ -314,8 +319,34 @@ def _resolve_sealed_prices_detailed(snap: Dict) -> Tuple[Dict[str, float], Dict[
         )
         if catalog_price is not None:
             prices["TCGPlayer"] = round(float(catalog_price), 2)
+
+    # Run live providers (eBay) ON TOP of the catalog price — mirrors the card
+    # resolver. Previously this path was guarded by ``if not prices`` and so
+    # never fired once the catalog TCGPlayer price landed, which is why sealed
+    # products carried no eBay data. A live source never overwrites the exact
+    # per-product catalog price.
+    query = PriceQuery(
+        name=snap["name"], set_name=snap["set_name"], game=snap["game"],
+        is_sealed=True, product_type=snap["product_type"],
+    )
+    for provider in get_enabled_providers():
+        if provider.name in prices:
+            continue
+        try:
+            result = provider.fetch(query)
+        except Exception as exc:  # noqa: BLE001 — one bad provider shouldn't kill the row
+            logger.exception("Provider %s raised on sealed %s: %s",
+                             provider.name, snap.get("id"), exc)
+            continue
+        if result and result.price is not None:
+            prices[result.source] = round(float(result.price), 2)
+            if getattr(result, "tiers", None):
+                tiers[result.source] = result.tiers
+
+    # Mock only as the true last resort — when neither catalog nor any live
+    # provider produced a price. Never merged on top of real data.
     if not prices:
-        prices, tiers = fetch_sealed_prices_all_sources_detailed(
+        prices = _mock_sealed_prices(
             snap["name"], snap["set_name"], snap["product_type"], snap["game"]
         )
     return prices, tiers

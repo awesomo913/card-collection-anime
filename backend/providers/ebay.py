@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
 SEARCH_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
+# A rarity-scoped search with fewer than this many hits is treated as too thin
+# to trust (eBay's rarity tags are inconsistent) and retried without rarity.
+# Floor is 4 — _tiers_from_prices needs >=4 prices for its quartile trim — so 5
+# leaves a small margin while still trusting genuine per-rarity results.
+_RARITY_MIN_RESULTS = 5
+
 
 def _is_ebay_url(url: str) -> bool:
     """True only for https links whose host is ebay.com or a subdomain.
@@ -121,21 +127,27 @@ class EbayProvider:
             self._token_expires_at = time.time() + float(data.get("expires_in", 7200))
             return self._token
 
-    def _search_items(self, query: PriceQuery, limit: int = 20) -> list:
-        """Run the Browse API item-summary search; return raw itemSummaries (or [])."""
-        if not self.is_enabled():
-            return []
-        token = self._get_token()
-        if not token:
-            return []
+    def _build_search_q(self, query: PriceQuery, *, include_rarity: bool) -> str:
+        """Assemble the eBay free-text query string.
 
+        ``include_rarity`` is a flag (not just ``query.rarity is not None``) so
+        the caller can deliberately retry *without* rarity when a rarity-scoped
+        search comes back too thin to trust.
+        """
         q_parts = [query.name, query.set_name]
         if query.is_foil:
             q_parts.append("foil")
         if query.is_sealed and query.product_type:
             q_parts.append(query.product_type)
-        q = " ".join(p for p in q_parts if p).strip()
+        if include_rarity and query.rarity:
+            q_parts.append(query.rarity)
+        return " ".join(p for p in q_parts if p).strip()
 
+    def _run_item_search(self, q: str, query: PriceQuery, token: str, limit: int) -> list:
+        """One Browse API item-summary call for a prebuilt query string.
+
+        Returns raw ``itemSummaries`` (or ``[]`` on any non-2xx / malformed body).
+        """
         params = {
             "q": q,
             "limit": str(limit),
@@ -159,6 +171,36 @@ class EbayProvider:
             return []
         data = resp.json()
         return data.get("itemSummaries", []) if isinstance(data, dict) else []
+
+    def _search_items(self, query: PriceQuery, limit: int = 20) -> list:
+        """Run the Browse API search; return raw itemSummaries (or []).
+
+        When the card carries a rarity, the search is scoped by it so the median
+        reflects that exact printing. eBay's rarity tags are inconsistent,
+        though — a too-narrow rarity search can return one mis-tagged listing,
+        which is worse than the broad name+set median. So a thin rarity-scoped
+        result gracefully falls back to the broad query.
+        """
+        if not self.is_enabled():
+            return []
+        token = self._get_token()
+        if not token:
+            return []
+
+        items = self._run_item_search(
+            self._build_search_q(query, include_rarity=True), query, token, limit
+        )
+
+        # Rarity tags on eBay are inconsistent: a rarity-scoped search that comes
+        # back too thin is likely mis-tagged, not genuinely rare. Retry once on
+        # the broad name+set query. Guarded on query.rarity so a naturally-sparse
+        # no-rarity search never double-calls.
+        if query.rarity and len(items) < _RARITY_MIN_RESULTS:
+            items = self._run_item_search(
+                self._build_search_q(query, include_rarity=False), query, token, limit
+            )
+
+        return items
 
     def fetch(self, query: PriceQuery) -> ProviderResult:
         items = self._search_items(query)

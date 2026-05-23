@@ -20,6 +20,7 @@ class PriceQuery:
     is_foil: bool = False
     is_sealed: bool = False
     product_type: Optional[str] = None  # only for sealed: "booster box", "pack", etc.
+    rarity: Optional[str] = None  # only for cards: scopes the eBay search per-printing
 
 
 @dataclass(frozen=True)
