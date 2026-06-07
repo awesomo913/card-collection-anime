@@ -81,3 +81,25 @@ class PriceHistory(Base):
     price_high = Column(Float, nullable=True)
     price_market = Column(Float, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class WatchlistEntry(Base):
+    """A price-alert watch on one card or sealed product.
+
+    The user picks a direction (drop / rise / either) and a percent move
+    measured from ``baseline_price``. Alerts are computed live from the latest
+    price_history row for the item — this table only persists the *watch
+    config* (so it survives reload) plus a ``muted`` flag for acknowledgement.
+    """
+    __tablename__ = "watchlist"
+    __table_args__ = (Index("idx_watchlist_item", "item_type", "item_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    item_type = Column(String)                     # 'card' | 'sealed'
+    item_id = Column(Integer)
+    direction = Column(String, default="drop")     # 'drop' | 'rise' | 'either'
+    threshold_pct = Column(Float, default=10.0)    # alert when move crosses this %
+    baseline_price = Column(Float, nullable=True)  # move measured from here
+    muted = Column(Boolean, default=False)         # acknowledged until it re-arms
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

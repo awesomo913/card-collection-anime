@@ -268,6 +268,39 @@ def price_history(item_type: str, item_id: int, db: Session = Depends(get_db)):
     ]
 
 
+@app.post("/watchlist", response_model=schemas.Watchlist)
+def add_watch(watch: schemas.WatchlistCreate, db: Session = Depends(get_db)):
+    """Add or update a price-alert watch on a card or sealed product."""
+    return crud.upsert_watch(db=db, watch=watch)
+
+
+@app.get("/watchlist", response_model=list[schemas.Watchlist])
+def list_watchlist(db: Session = Depends(get_db)):
+    return crud.get_watchlist(db=db)
+
+
+@app.delete("/watchlist/{watch_id}")
+def remove_watch(watch_id: int, db: Session = Depends(get_db)):
+    if not crud.delete_watch(db=db, watch_id=watch_id):
+        raise HTTPException(status_code=404, detail="Watch not found")
+    return {"ok": True}
+
+
+@app.post("/watchlist/{watch_id}/ack", response_model=schemas.Watchlist)
+def acknowledge_alert(watch_id: int, db: Session = Depends(get_db)):
+    """Mute an alert until its price recovers and re-crosses the threshold."""
+    entry = crud.set_watch_muted(db=db, watch_id=watch_id, muted=True)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Watch not found")
+    return entry
+
+
+@app.get("/alerts", response_model=list[schemas.Alert])
+def get_alerts(db: Session = Depends(get_db)):
+    """Active (triggered, non-muted) price alerts computed from the watchlist."""
+    return crud.evaluate_watchlist(db=db)
+
+
 @app.get("/health")
 def health():
     """Lightweight liveness probe — used by load balancers and the status UI."""

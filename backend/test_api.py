@@ -24,6 +24,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 def client():
     if TEST_DB.exists():
         TEST_DB.unlink()
+    # Re-assert inside the fixture so this module's reload binds to OUR db even
+    # if another test module set DATABASE_URL at its import time (test isolation).
+    os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
     sys.path.insert(0, str(Path(__file__).parent))
     import database, models, main
     importlib.reload(database)

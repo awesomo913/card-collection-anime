@@ -260,3 +260,134 @@ def price_snapshot(db: Session):
         "history": history,
         "total_value": total_value
     }
+
+
+# ── Watchlist / price alerts ────────────────────────────────────────────────
+import alert_logic
+
+
+def _latest_price(db: Session, item_type: str, item_id: int) -> Optional[float]:
+    """Most recent recorded price for an item, falling back to the item's
+    stored current_price when no price_history rows exist yet."""
+    row = (
+        db.query(models.PriceHistory)
+        .filter(
+            models.PriceHistory.item_type == item_type,
+            models.PriceHistory.item_id == item_id,
+        )
+        .order_by(models.PriceHistory.timestamp.desc())
+        .first()
+    )
+    if row and row.price is not None:
+        return float(row.price)
+    item = (
+        get_card(db, item_id) if item_type == "card"
+        else get_sealed_product(db, item_id)
+    )
+    if item and item.current_price is not None:
+        return float(item.current_price)
+    return None
+
+
+def upsert_watch(db: Session, watch: schemas.WatchlistCreate):
+    """Create a watch, or update the existing one for the same item.
+
+    One watch per (item_type, item_id) — re-watching updates the config. If no
+    baseline is supplied, it defaults to the item's latest known price.
+    """
+    existing = (
+        db.query(models.WatchlistEntry)
+        .filter(
+            models.WatchlistEntry.item_type == watch.item_type,
+            models.WatchlistEntry.item_id == watch.item_id,
+        )
+        .first()
+    )
+    baseline = watch.baseline_price
+    if baseline is None:
+        baseline = _latest_price(db, watch.item_type, watch.item_id)
+    if existing:
+        existing.direction = watch.direction
+        existing.threshold_pct = watch.threshold_pct
+        if watch.baseline_price is not None:
+            existing.baseline_price = watch.baseline_price
+        existing.note = watch.note
+        existing.muted = False  # re-arm on edit
+        db.commit()
+        db.refresh(existing)
+        return existing
+    entry = models.WatchlistEntry(
+        item_type=watch.item_type,
+        item_id=watch.item_id,
+        direction=watch.direction,
+        threshold_pct=watch.threshold_pct,
+        baseline_price=baseline,
+        note=watch.note,
+        muted=False,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def get_watchlist(db: Session):
+    return db.query(models.WatchlistEntry).order_by(models.WatchlistEntry.created_at).all()
+
+
+def get_watch(db: Session, watch_id: int):
+    return db.query(models.WatchlistEntry).filter(models.WatchlistEntry.id == watch_id).first()
+
+
+def delete_watch(db: Session, watch_id: int) -> bool:
+    entry = get_watch(db, watch_id)
+    if not entry:
+        return False
+    db.delete(entry)
+    db.commit()
+    return True
+
+
+def set_watch_muted(db: Session, watch_id: int, muted: bool):
+    entry = get_watch(db, watch_id)
+    if not entry:
+        return None
+    entry.muted = muted
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def evaluate_watchlist(db: Session) -> list[dict]:
+    """Compute active alerts from the watchlist + latest prices.
+
+    Side effect: a muted entry whose price has recovered out of the trigger
+    zone is auto-un-muted so the next genuine cross fires again.
+    """
+    alerts: list[dict] = []
+    dirty = False
+    for entry in get_watchlist(db):
+        current = _latest_price(db, entry.item_type, entry.item_id)
+        result = alert_logic.build_alert(
+            {
+                "id": entry.id,
+                "item_type": entry.item_type,
+                "item_id": entry.item_id,
+                "direction": entry.direction,
+                "threshold_pct": entry.threshold_pct,
+                "baseline_price": entry.baseline_price,
+                "muted": entry.muted,
+                "note": entry.note,
+            },
+            current,
+        )
+        if result is None:
+            continue
+        if result.get("rearm"):
+            entry.muted = False
+            dirty = True
+            continue
+        alerts.append(result)
+    if dirty:
+        db.commit()
+    return alerts

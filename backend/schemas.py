@@ -398,3 +398,39 @@ class ScanRepriceResponse(BaseModel):
     tcgplayer_product_id: Optional[str] = None
     set_name: Optional[str] = None
     source: Optional[str] = None
+
+
+# ── Watchlist / price alerts ────────────────────────────────────────────────
+
+class WatchlistCreate(BaseModel):
+    item_type: Literal["card", "sealed"]
+    item_id: int
+    direction: Literal["drop", "rise", "either"] = "drop"
+    threshold_pct: float = Field(default=10.0, gt=0)
+    baseline_price: Optional[float] = None  # defaults to item's latest price
+    note: Optional[str] = None
+
+
+class Watchlist(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    item_type: str
+    item_id: int
+    direction: str
+    threshold_pct: float
+    baseline_price: Optional[float] = None
+    muted: bool = False
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class Alert(BaseModel):
+    id: int                      # watchlist entry id
+    item_type: str
+    item_id: int
+    direction: str
+    threshold_pct: float
+    baseline_price: Optional[float] = None
+    current_price: Optional[float] = None
+    pct_change: float
+    note: Optional[str] = None
