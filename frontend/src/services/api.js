@@ -119,6 +119,15 @@ export const forecastSealed = (id) =>
 export const forecastBatch = (items) =>
   api.post('/forecast/batch', { items }, { timeout: 600000 });
 
+// ── Price-alert watchlist ───────────────────────────────────────────────────
+// Watch a card/sealed item for a % price move; /alerts returns the triggered,
+// non-muted ones. Persisted server-side so watches survive reloads.
+export const getWatchlist = () => api.get('/watchlist');
+export const addWatch = (watch) => api.post('/watchlist', watch);
+export const deleteWatch = (id) => api.delete(`/watchlist/${id}`);
+export const ackAlert = (id) => api.post(`/watchlist/${id}/ack`);
+export const getAlerts = () => api.get('/alerts');
+
 // Streaming whole-collection forecast (Server-Sent Events). Calls
 // onItem({index, done, total, row}) per finished item and onDone({aggregate,
 // duration_seconds, cache_hits, cache_misses, model}) at the end. Uses fetch +
@@ -169,6 +178,7 @@ const apiClient = {
   identifyImage, identifyBatch, identifyVideo, identifyText,
   scanPreviewUrl, scanCapture, scanReprice,
   forecastCard, forecastSealed, forecastBatch, forecastBatchStream,
+  getWatchlist, addWatch, deleteWatch, ackAlert, getAlerts,
 };
 
 export default apiClient;

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import Sparkline from '../components/Sparkline';
 import ForecastPanel from '../components/ForecastPanel';
+import WatchControl from '../components/WatchControl';
 import EbayListingsPanel from '../components/EbayListingsPanel';
 import { PRODUCT_TYPES_BY_GAME } from '../data/options';
 
@@ -340,6 +341,9 @@ const SealedDetailPage = () => {
       )}
 
       <ForecastPanel itemType="sealed" itemId={item.id} />
+
+      {/* Per-item price-alert watch (drop/rise/either + % threshold). */}
+      <WatchControl itemType="sealed" itemId={item.id} currentPrice={currentPrice} />
 
       {/* Live eBay listings + links. On-demand button. */}
       <EbayListingsPanel itemType="sealed" itemId={item.id} />

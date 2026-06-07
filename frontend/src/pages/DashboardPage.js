@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import AlertPanel from '../components/AlertPanel';
 
 const DashboardPage = () => {
   const [stats, setStats] = useState({ total: 0, cards: 0, sealed: 0 });
@@ -29,6 +30,7 @@ const DashboardPage = () => {
   return (
     <section>
       <h2>Dashboard</h2>
+      <AlertPanel />
       <div className="dashboard-stats">
         <div className="stat-card">
           <h3>Total Value</h3>
